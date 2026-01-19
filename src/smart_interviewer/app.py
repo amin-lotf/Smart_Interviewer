@@ -3,14 +3,27 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
+
+from smart_interviewer.core import WhisperTranscriber, build_voice_graph
+from smart_interviewer.schemas import VoiceTranscriptionResponse
+from smart_interviewer.settings import settings
 
 logger = logging.getLogger("smart_interviewer")
 
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # init resources later (models, clients, etc.)
+    # Pick your defaults (later move to settings/env)
+    transcriber = WhisperTranscriber(
+        model_name=settings.WHISPER_MODEL_NAME,
+        device=settings.WHISPER_DEVICE,  # change to "cuda" if GPU is ready
+        compute_type=settings.WHISPER_COMPUTE_TYPE,
+        language=settings.WHISPER_LANGUAGE,
+    )
+    app.state.voice_graph = build_voice_graph(transcriber=transcriber)
     yield
     # cleanup later
 
@@ -32,24 +45,16 @@ def create_app() -> FastAPI:
     # -------------------------
 
     # 1) Multipart file upload (best for Streamlit mic -> file-like -> upload)
-    @app.post("/v1/voice/upload")
+    @app.post("/v1/voice/upload", response_model=VoiceTranscriptionResponse)
     async def upload_voice(
-        audio: Annotated[UploadFile, File(description="Audio file (wav/mp3/webm/m4a/ogg, etc.)")],
+            audio: Annotated[UploadFile, File(description="Audio file (wav/mp3/webm/m4a/ogg, etc.)")],
     ):
         if not audio.filename:
             raise HTTPException(status_code=400, detail="Missing audio file")
 
-        # Optional guardrails (keep them lenient for now)
-        # - you can tighten later when you know your STT pipeline expectations
-        allowed_prefixes = ("audio/",)
-        if audio.content_type and not audio.content_type.startswith(allowed_prefixes):
-            raise HTTPException(
-                status_code=415,
-                detail=f"Unsupported content-type: {audio.content_type}",
-            )
+        if audio.content_type and not audio.content_type.startswith("audio/"):
+            raise HTTPException(status_code=415, detail=f"Unsupported content-type: {audio.content_type}")
 
-        # Don’t read the whole file into memory if you don’t need to.
-        # But reading once is fine for MVP; we’ll just compute the size for debugging.
         data = await audio.read()
         size_bytes = len(data)
 
@@ -60,13 +65,25 @@ def create_app() -> FastAPI:
             size_bytes,
         )
 
-        return {
-            "status": "ok",
-            "endpoint": "upload",
-            "filename": audio.filename,
-            "content_type": audio.content_type,
-            "size_bytes": size_bytes,
-        }
+        compiled = app.state.voice_graph
+
+        final_state = await compiled.ainvoke(
+            {
+                "audio_bytes": data,
+                "filename": audio.filename or "",
+                "content_type": audio.content_type or "",
+            }
+        )
+
+        text = (final_state.get("text") or "").strip()
+
+        return VoiceTranscriptionResponse(
+            status="ok",
+            text=text,
+            filename=audio.filename,
+            content_type=audio.content_type,
+            size_bytes=size_bytes,
+        )
 
     # 2) Raw bytes endpoint (useful for non-browser clients or later WS pipelines)
     @app.post("/v1/voice/raw")
@@ -96,3 +113,4 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     return app
+

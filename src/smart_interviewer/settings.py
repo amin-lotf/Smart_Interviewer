@@ -1,5 +1,7 @@
 # src/redact_id/settings.py
 import sys
+from typing import Optional
+
 from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -18,7 +20,11 @@ class Settings(BaseSettings):
     HOST: str = Field(default=DEFAULT_HOST)
     PORT: int = Field(default=DEFAULT_PORT, ge=1, le=65535)
     RELOAD: bool = Field(default=DEFAULT_RELOAD)
-
+    OPENAI_API_KEY:str = Field(default="")
+    WHISPER_MODEL_NAME:str = Field(default="")
+    WHISPER_DEVICE:str = Field(default="")
+    WHISPER_COMPUTE_TYPE:str = Field(default="")
+    WHISPER_LANGUAGE:Optional[str] = Field(default=None)
 
 
 def load_settings_or_die() -> Settings:
