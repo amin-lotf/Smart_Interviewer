@@ -1,10 +1,11 @@
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from pydantic import BaseModel, Field
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 
 from smart_interviewer.core import WhisperTranscriber, build_voice_graph
 from smart_interviewer.schemas import VoiceTranscriptionResponse
@@ -43,6 +44,58 @@ def create_app() -> FastAPI:
     # -------------------------
     # Voice ingestion (future-proof)
     # -------------------------
+    @app.post("/v1/voice/upload/stream")
+    async def upload_voice_stream(
+            audio: Annotated[UploadFile, File(description="Audio file")],
+    ):
+        data = await audio.read()
+        graph = app.state.voice_graph
+
+        async def event_gen():
+            sent_transcript = False
+            sent_assistant = False
+
+            # IMPORTANT: stream_mode="values" yields the FULL state after each step
+            async for state in graph.astream(
+                    {
+                        "audio_bytes": data,
+                        "filename": audio.filename or "",
+                        "content_type": audio.content_type or "",
+                    },
+                    stream_mode="values",
+            ):
+                # Debug: uncomment once if needed
+                # logger.info("GRAPH STATE: %s", state)
+
+                # 1) Emit transcript as soon as it exists
+                text = (state.get("text") or "").strip()
+                if text and not sent_transcript:
+                    ev = {"type": "transcript", "text": text}
+                    yield "event: transcript\n"
+                    yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                    sent_transcript = True
+
+                # 2) If you store assistant output in state, emit it here
+                # If your fake_llm currently uses events[] instead, change fake_llm to set assistant_text (shown below)
+                assistant_text = (state.get("assistant_text") or "").strip()
+                if assistant_text and not sent_assistant:
+                    ev = {"type": "assistant", "text": assistant_text}
+                    yield "event: assistant\n"
+                    yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                    sent_assistant = True
+
+            yield "event: done\n"
+            yield "data: {}\n\n"
+
+        return StreamingResponse(
+            event_gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     # 1) Multipart file upload (best for Streamlit mic -> file-like -> upload)
     @app.post("/v1/voice/upload", response_model=VoiceTranscriptionResponse)
