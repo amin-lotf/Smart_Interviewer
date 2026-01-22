@@ -10,8 +10,19 @@ import requests
 class SessionView:
     status: str
     phase: str
-    score: int
     turn: int
+
+    # NEW: level-based progression
+    current_level: int
+    last_passed_level: int
+    batch_level: int
+    batch_index: int
+    batch_size: int
+    batch_correct: int
+    interview_done: bool
+    final_level: int
+
+    # UI text
     current_question: str
     assistant_text: str
     transcript: str
@@ -88,8 +99,17 @@ class ApiClient:
         return SessionView(
             status=j.get("status", "ok"),
             phase=j.get("phase", ""),
-            score=int(j.get("score", 0)),
             turn=int(j.get("turn", 0)),
+
+            current_level=int(j.get("current_level", 1)),
+            last_passed_level=int(j.get("last_passed_level", 0)),
+            batch_level=int(j.get("batch_level", 0)),
+            batch_index=int(j.get("batch_index", 0)),
+            batch_size=int(j.get("batch_size", 3)),
+            batch_correct=int(j.get("batch_correct", 0)),
+            interview_done=bool(j.get("interview_done", False)),
+            final_level=int(j.get("final_level", 0)),
+
             current_question=j.get("current_question", ""),
             assistant_text=j.get("assistant_text", ""),
             transcript=j.get("transcript", ""),

@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from smart_interviewer.consts import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_RELOAD
+from smart_interviewer.consts import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_RELOAD, MAX_TURNS
 
 
 class Settings(BaseSettings):
@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     WHISPER_DEVICE:str = Field(default="")
     WHISPER_COMPUTE_TYPE:str = Field(default="")
     WHISPER_LANGUAGE:Optional[str] = Field(default=None)
+    MAX_TURNS:int = Field(default=MAX_TURNS)
 
 
 def load_settings_or_die() -> Settings:

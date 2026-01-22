@@ -8,7 +8,7 @@ from typing import Annotated, Dict, Any
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Header
 from starlette.responses import JSONResponse
 
-from smart_interviewer.core import WhisperTranscriber, InterviewEngine, initial_state
+from smart_interviewer.core import WhisperTranscriber, InterviewEngine, initial_state, ClientAction
 from smart_interviewer.settings import settings
 
 logger = logging.getLogger("smart_interviewer")
@@ -41,11 +41,25 @@ def _public_state(st: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": "ok",
         "phase": st.get("phase") or "",
-        "score": int(st.get("score") or 0),
         "turn": int(st.get("turn") or 0),
+
+        # NEW: level-based progression
+        "current_level": int(st.get("current_level") or 1),
+        "last_passed_level": int(st.get("last_passed_level") or 0),
+        "batch_level": int(st.get("batch_level") or 0),
+        "batch_index": int(st.get("batch_index") or 0),
+        "batch_size": int(st.get("batch_size") or 3),
+        "batch_correct": int(st.get("batch_correct") or 0),
+
+        # terminal info
+        "interview_done": bool(st.get("interview_done") or False),
+        "final_level": int(st.get("final_level") or 0),
+
+        # question + UI text
         "current_question": st.get("current_question") or "",
         "assistant_text": st.get("assistant_text") or "",
         "transcript": (st.get("text") or "").strip(),
+
         "can_proceed": bool(st.get("can_proceed") or False),
         "allowed_actions": list(st.get("allowed_actions") or []),
     }
@@ -111,7 +125,7 @@ def create_app() -> FastAPI:
         await _ensure_session_initialized(app, sid)
 
         engine: InterviewEngine = app.state.engine
-        st = await engine.resume(thread_id=sid, resume_payload={"action": "START"})
+        st = await engine.resume(thread_id=sid, resume_payload={"action": ClientAction.START})
         pub = _public_state(dict(st))
         PUBLIC_STATE_BY_SESSION[sid] = pub
         return pub
@@ -137,7 +151,7 @@ def create_app() -> FastAPI:
         st = await engine.resume(
             thread_id=sid,
             resume_payload={
-                "action": "ANSWER",
+                "action": ClientAction.ANSWER,
                 "audio_bytes": data,
                 "filename": audio.filename or "",
                 "content_type": audio.content_type or "",
@@ -155,7 +169,7 @@ def create_app() -> FastAPI:
         await _ensure_session_initialized(app, sid)
 
         engine: InterviewEngine = app.state.engine
-        st = await engine.resume(thread_id=sid, resume_payload={"action": "NEXT"})
+        st = await engine.resume(thread_id=sid, resume_payload={"action": ClientAction.NEXT})
         pub = _public_state(dict(st))
         PUBLIC_STATE_BY_SESSION[sid] = pub
         return pub
