@@ -1,32 +1,65 @@
-import json
+# smart_interviewer/app.py
+from __future__ import annotations
+
 import logging
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Dict, Any
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
-from pydantic import BaseModel, Field
-from starlette.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Header
+from starlette.responses import JSONResponse
 
-from smart_interviewer.core import WhisperTranscriber, build_voice_graph
-from smart_interviewer.schemas import VoiceTranscriptionResponse
+from smart_interviewer.core import (
+    WhisperTranscriber,
+    initial_state,
+    start_interview,
+    answer_and_evaluate,
+    next_question, AgentPhase,
+)
 from smart_interviewer.settings import settings
 
 logger = logging.getLogger("smart_interviewer")
 
+STATE_BY_SESSION: Dict[str, Dict[str, Any]] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Pick your defaults (later move to settings/env)
-    transcriber = WhisperTranscriber(
+    app.state.transcriber = WhisperTranscriber(
         model_name=settings.WHISPER_MODEL_NAME,
-        device=settings.WHISPER_DEVICE,  # change to "cuda" if GPU is ready
+        device=settings.WHISPER_DEVICE,
         compute_type=settings.WHISPER_COMPUTE_TYPE,
         language=settings.WHISPER_LANGUAGE,
     )
-    app.state.voice_graph = build_voice_graph(transcriber=transcriber)
     yield
-    # cleanup later
+
+
+def _sid(x_session_id: str) -> str:
+    sid = (x_session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="Missing session id (send header: X-Session-Id)")
+    return sid
+
+
+def _get_state(session_id: str) -> Dict[str, Any]:
+    st = STATE_BY_SESSION.get(session_id)
+    if st is None:
+        st = dict(initial_state())
+        STATE_BY_SESSION[session_id] = st
+    return st
+
+
+def _public_state(st: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "status": "ok",
+        "phase": st.get("phase") or "",
+        "score": int(st.get("score") or 0),
+        "turn": int(st.get("turn") or 0),
+        "current_question": st.get("current_question") or "",
+        "assistant_text": st.get("assistant_text") or "",
+        "transcript": (st.get("text") or "").strip(),
+        "can_proceed": bool(st.get("can_proceed") or False),
+        "allowed_actions": list(st.get("allowed_actions") or []),
+    }
 
 
 def create_app() -> FastAPI:
@@ -41,129 +74,79 @@ def create_app() -> FastAPI:
     async def root():
         return {"status": "ok", "service": "SmartInterviewer", "version": "0.1.0"}
 
-    # -------------------------
-    # Voice ingestion (future-proof)
-    # -------------------------
-    @app.post("/v1/voice/upload/stream")
-    async def upload_voice_stream(
-            audio: Annotated[UploadFile, File(description="Audio file")],
+    @app.post("/v1/session/reset")
+    async def reset_session(
+        x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
     ):
-        data = await audio.read()
-        graph = app.state.voice_graph
+        sid = _sid(x_session_id)
+        STATE_BY_SESSION[sid] = dict(initial_state())
+        return {"status": "ok", "session_id": sid}
 
-        async def event_gen():
-            sent_transcript = False
-            sent_assistant = False
-
-            # IMPORTANT: stream_mode="values" yields the FULL state after each step
-            async for state in graph.astream(
-                    {
-                        "audio_bytes": data,
-                        "filename": audio.filename or "",
-                        "content_type": audio.content_type or "",
-                    },
-                    stream_mode="values",
-            ):
-                # Debug: uncomment once if needed
-                # logger.info("GRAPH STATE: %s", state)
-
-                # 1) Emit transcript as soon as it exists
-                text = (state.get("text") or "").strip()
-                if text and not sent_transcript:
-                    ev = {"type": "transcript", "text": text}
-                    yield "event: transcript\n"
-                    yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-                    sent_transcript = True
-
-                # 2) If you store assistant output in state, emit it here
-                # If your fake_llm currently uses events[] instead, change fake_llm to set assistant_text (shown below)
-                assistant_text = (state.get("assistant_text") or "").strip()
-                if assistant_text and not sent_assistant:
-                    ev = {"type": "assistant", "text": assistant_text}
-                    yield "event: assistant\n"
-                    yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-                    sent_assistant = True
-
-            yield "event: done\n"
-            yield "data: {}\n\n"
-
-        return StreamingResponse(
-            event_gen(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    # 1) Multipart file upload (best for Streamlit mic -> file-like -> upload)
-    @app.post("/v1/voice/upload", response_model=VoiceTranscriptionResponse)
-    async def upload_voice(
-            audio: Annotated[UploadFile, File(description="Audio file (wav/mp3/webm/m4a/ogg, etc.)")],
+    @app.get("/v1/session/state")
+    async def get_session_state(
+        x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
     ):
+        sid = _sid(x_session_id)
+        st = _get_state(sid)
+        return _public_state(st)
+
+    @app.post("/v1/interview/start")
+    async def interview_start(
+        x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
+    ):
+        sid = _sid(x_session_id)
+        st = _get_state(sid)
+        st2 = await start_interview(st)
+        STATE_BY_SESSION[sid] = dict(st2)
+        return _public_state(STATE_BY_SESSION[sid])
+
+    @app.post("/v1/interview/answer")
+    async def interview_answer(
+        audio: Annotated[UploadFile, File(description="Audio file")],
+        x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
+    ):
+        sid = _sid(x_session_id)
+
         if not audio.filename:
             raise HTTPException(status_code=400, detail="Missing audio file")
-
         if audio.content_type and not audio.content_type.startswith("audio/"):
             raise HTTPException(status_code=415, detail=f"Unsupported content-type: {audio.content_type}")
 
         data = await audio.read()
-        size_bytes = len(data)
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty audio bytes")
 
-        logger.info(
-            "Received audio upload: filename=%s content_type=%s size=%d bytes",
-            audio.filename,
-            audio.content_type,
-            size_bytes,
+        st = _get_state(sid)
+        transcriber = app.state.transcriber
+
+        st2 = await answer_and_evaluate(
+            st,
+            transcriber=transcriber,
+            audio_bytes=data,
+            filename=audio.filename or "",
+            content_type=audio.content_type or "",
         )
+        STATE_BY_SESSION[sid] = dict(st2)
+        return _public_state(STATE_BY_SESSION[sid])
 
-        compiled = app.state.voice_graph
+    @app.post("/v1/interview/next")
+    async def interview_next(
+        x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
+    ):
+        sid = _sid(x_session_id)
+        st = _get_state(sid)
 
-        final_state = await compiled.ainvoke(
-            {
-                "audio_bytes": data,
-                "filename": audio.filename or "",
-                "content_type": audio.content_type or "",
-            }
-        )
+        if (st.get("phase") or "").upper() != AgentPhase.EVALUATED:
+            raise HTTPException(status_code=409, detail="Cannot go next: not in EVALUATED phase")
+        if not bool(st.get("can_proceed") or False):
+            raise HTTPException(status_code=403, detail="Cannot go next: permission denied (answer not accepted)")
 
-        text = (final_state.get("text") or "").strip()
+        st2 = await next_question(st)
+        STATE_BY_SESSION[sid] = dict(st2)
+        return _public_state(STATE_BY_SESSION[sid])
 
-        return VoiceTranscriptionResponse(
-            status="ok",
-            text=text,
-            filename=audio.filename,
-            content_type=audio.content_type,
-            size_bytes=size_bytes,
-        )
-
-    # 2) Raw bytes endpoint (useful for non-browser clients or later WS pipelines)
-    @app.post("/v1/voice/raw")
-    async def raw_voice(request: Request):
-        content_type = request.headers.get("content-type", "")
-        body = await request.body()
-
-        if not body:
-            raise HTTPException(status_code=400, detail="Empty request body")
-
-        logger.info(
-            "Received raw audio: content_type=%s size=%d bytes",
-            content_type,
-            len(body),
-        )
-
-        return {
-            "status": "ok",
-            "endpoint": "raw",
-            "content_type": content_type,
-            "size_bytes": len(body),
-        }
-
-    # (Optional) a tiny centralized error response shape
     @app.exception_handler(HTTPException)
     async def http_exc_handler(_: Request, exc: HTTPException):
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     return app
-
