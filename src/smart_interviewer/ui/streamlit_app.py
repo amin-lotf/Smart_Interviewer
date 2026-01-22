@@ -95,9 +95,9 @@ for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-# Current question box
-if s.current_question:
-    st.info(f"**Question:** {s.current_question}")
+# # Current question box
+# if s.current_question:
+#     st.info(f"**Question:** {s.current_question}")
 
 # Controls row
 colA, colB, colC = st.columns(3)

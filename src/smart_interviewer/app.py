@@ -8,28 +8,25 @@ from typing import Annotated, Dict, Any
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Header
 from starlette.responses import JSONResponse
 
-from smart_interviewer.core import (
-    WhisperTranscriber,
-    initial_state,
-    start_interview,
-    answer_and_evaluate,
-    next_question, AgentPhase,
-)
+from smart_interviewer.core import WhisperTranscriber, InterviewEngine, initial_state
 from smart_interviewer.settings import settings
 
 logger = logging.getLogger("smart_interviewer")
 
-STATE_BY_SESSION: Dict[str, Dict[str, Any]] = {}
+# Keep only a lightweight cache of the *latest* public state per session
+# (LangGraph checkpointer already persists the real state per thread_id)
+PUBLIC_STATE_BY_SESSION: Dict[str, Dict[str, Any]] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.transcriber = WhisperTranscriber(
+    transcriber = WhisperTranscriber(
         model_name=settings.WHISPER_MODEL_NAME,
         device=settings.WHISPER_DEVICE,
         compute_type=settings.WHISPER_COMPUTE_TYPE,
         language=settings.WHISPER_LANGUAGE,
     )
+    app.state.engine = InterviewEngine(transcriber=transcriber)
     yield
 
 
@@ -38,14 +35,6 @@ def _sid(x_session_id: str) -> str:
     if not sid:
         raise HTTPException(status_code=400, detail="Missing session id (send header: X-Session-Id)")
     return sid
-
-
-def _get_state(session_id: str) -> Dict[str, Any]:
-    st = STATE_BY_SESSION.get(session_id)
-    if st is None:
-        st = dict(initial_state())
-        STATE_BY_SESSION[session_id] = st
-    return st
 
 
 def _public_state(st: Dict[str, Any]) -> Dict[str, Any]:
@@ -60,6 +49,22 @@ def _public_state(st: Dict[str, Any]) -> Dict[str, Any]:
         "can_proceed": bool(st.get("can_proceed") or False),
         "allowed_actions": list(st.get("allowed_actions") or []),
     }
+
+
+async def _ensure_session_initialized(app: FastAPI, sid: str) -> Dict[str, Any]:
+    """
+    Ensures the graph has been invoked at least once for this sid (thread_id),
+    so it reaches the first interrupt (wait_start) and returns a UI-friendly state.
+    """
+    cached = PUBLIC_STATE_BY_SESSION.get(sid)
+    if cached is not None:
+        return cached
+
+    engine: InterviewEngine = app.state.engine
+    st = await engine.init(thread_id=sid)  # will stop at interrupt wait_start
+    pub = _public_state(dict(st))
+    PUBLIC_STATE_BY_SESSION[sid] = pub
+    return pub
 
 
 def create_app() -> FastAPI:
@@ -79,7 +84,15 @@ def create_app() -> FastAPI:
         x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
     ):
         sid = _sid(x_session_id)
-        STATE_BY_SESSION[sid] = dict(initial_state())
+
+        # Reset UI cache
+        PUBLIC_STATE_BY_SESSION[sid] = _public_state(dict(initial_state()))
+
+        # Also re-init the graph for this thread_id by calling init (it will set the state again)
+        engine: InterviewEngine = app.state.engine
+        st = await engine.init(thread_id=sid)
+        PUBLIC_STATE_BY_SESSION[sid] = _public_state(dict(st))
+
         return {"status": "ok", "session_id": sid}
 
     @app.get("/v1/session/state")
@@ -87,18 +100,21 @@ def create_app() -> FastAPI:
         x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
     ):
         sid = _sid(x_session_id)
-        st = _get_state(sid)
-        return _public_state(st)
+        pub = await _ensure_session_initialized(app, sid)
+        return pub
 
     @app.post("/v1/interview/start")
     async def interview_start(
         x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
     ):
         sid = _sid(x_session_id)
-        st = _get_state(sid)
-        st2 = await start_interview(st)
-        STATE_BY_SESSION[sid] = dict(st2)
-        return _public_state(STATE_BY_SESSION[sid])
+        await _ensure_session_initialized(app, sid)
+
+        engine: InterviewEngine = app.state.engine
+        st = await engine.resume(thread_id=sid, resume_payload={"action": "START"})
+        pub = _public_state(dict(st))
+        PUBLIC_STATE_BY_SESSION[sid] = pub
+        return pub
 
     @app.post("/v1/interview/answer")
     async def interview_answer(
@@ -106,6 +122,7 @@ def create_app() -> FastAPI:
         x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
     ):
         sid = _sid(x_session_id)
+        await _ensure_session_initialized(app, sid)
 
         if not audio.filename:
             raise HTTPException(status_code=400, detail="Missing audio file")
@@ -116,37 +133,39 @@ def create_app() -> FastAPI:
         if not data:
             raise HTTPException(status_code=400, detail="Empty audio bytes")
 
-        st = _get_state(sid)
-        transcriber = app.state.transcriber
-
-        st2 = await answer_and_evaluate(
-            st,
-            transcriber=transcriber,
-            audio_bytes=data,
-            filename=audio.filename or "",
-            content_type=audio.content_type or "",
+        engine: InterviewEngine = app.state.engine
+        st = await engine.resume(
+            thread_id=sid,
+            resume_payload={
+                "action": "ANSWER",
+                "audio_bytes": data,
+                "filename": audio.filename or "",
+                "content_type": audio.content_type or "",
+            },
         )
-        STATE_BY_SESSION[sid] = dict(st2)
-        return _public_state(STATE_BY_SESSION[sid])
+        pub = _public_state(dict(st))
+        PUBLIC_STATE_BY_SESSION[sid] = pub
+        return pub
 
     @app.post("/v1/interview/next")
     async def interview_next(
         x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
     ):
         sid = _sid(x_session_id)
-        st = _get_state(sid)
+        await _ensure_session_initialized(app, sid)
 
-        if (st.get("phase") or "").upper() != AgentPhase.EVALUATED:
-            raise HTTPException(status_code=409, detail="Cannot go next: not in EVALUATED phase")
-        if not bool(st.get("can_proceed") or False):
-            raise HTTPException(status_code=403, detail="Cannot go next: permission denied (answer not accepted)")
-
-        st2 = await next_question(st)
-        STATE_BY_SESSION[sid] = dict(st2)
-        return _public_state(STATE_BY_SESSION[sid])
+        engine: InterviewEngine = app.state.engine
+        st = await engine.resume(thread_id=sid, resume_payload={"action": "NEXT"})
+        pub = _public_state(dict(st))
+        PUBLIC_STATE_BY_SESSION[sid] = pub
+        return pub
 
     @app.exception_handler(HTTPException)
     async def http_exc_handler(_: Request, exc: HTTPException):
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    @app.exception_handler(ValueError)
+    async def value_error_handler(_: Request, exc: ValueError):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     return app
