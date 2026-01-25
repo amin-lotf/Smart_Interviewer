@@ -36,14 +36,43 @@ def _sid(x_session_id: str) -> str:
         raise HTTPException(status_code=400, detail="Missing session id (send header: X-Session-Id)")
     return sid
 
+def _extract_interrupt_payload(st: Dict[str, Any]) -> Dict[str, Any] | None:
+    for k in ("__interrupt__", "interrupt", "interrupts"):
+        payload = st.get(k)
+        if payload is None:
+            continue
+        if isinstance(payload, list) and payload:
+            return payload[-1] if isinstance(payload[-1], dict) else None
+        if isinstance(payload, dict):
+            return payload
+    return None
 
 def _public_state(st: Dict[str, Any]) -> Dict[str, Any]:
+    intr = _extract_interrupt_payload(st)
+
+    download = None
+    if isinstance(intr, dict) and intr.get("type") == "download_file":
+        f = intr.get("file")
+        if isinstance(f, dict):
+            download = {
+                "filename": f.get("filename") or "interview_summary.json",
+                "content_type": f.get("content_type") or "application/json",
+                "data_base64": f.get("data_base64") or "",
+            }
+
+    allowed = list(st.get("allowed_actions") or [])
+    assistant_text = st.get("assistant_text") or ""
+
+    # ✅ critical: if we're in download interrupt, force FINISH UI state
+    if download is not None:
+        allowed = [ClientAction.FINISH]
+        assistant_text = intr.get("message") or assistant_text
+
     return {
         "status": "ok",
         "phase": st.get("phase") or "",
         "turn": int(st.get("turn") or 0),
 
-        # NEW: level-based progression
         "current_level": int(st.get("current_level") or 1),
         "last_passed_level": int(st.get("last_passed_level") or 0),
         "batch_level": int(st.get("batch_level") or 0),
@@ -51,17 +80,23 @@ def _public_state(st: Dict[str, Any]) -> Dict[str, Any]:
         "batch_size": int(st.get("batch_size") or 3),
         "batch_correct": int(st.get("batch_correct") or 0),
 
-        # terminal info
         "interview_done": bool(st.get("interview_done") or False),
         "final_level": int(st.get("final_level") or 0),
 
-        # question + UI text
         "current_question": st.get("current_question") or "",
-        "assistant_text": st.get("assistant_text") or "",
+        "assistant_text": assistant_text,
         "transcript": (st.get("text") or "").strip(),
 
         "can_proceed": bool(st.get("can_proceed") or False),
-        "allowed_actions": list(st.get("allowed_actions") or []),
+        "allowed_actions": allowed,
+
+        "interrupt": intr,
+        "download": download,
+        "summary": {
+            "filename": st.get("summary_filename") or "",
+            "content_type": st.get("summary_content_type") or "",
+            "data_base64": st.get("summary_data_base64") or "",
+        } if (st.get("summary_data_base64") or "") else None,
     }
 
 
@@ -170,6 +205,19 @@ def create_app() -> FastAPI:
 
         engine: InterviewEngine = app.state.engine
         st = await engine.resume(thread_id=sid, resume_payload={"action": ClientAction.NEXT})
+        pub = _public_state(dict(st))
+        PUBLIC_STATE_BY_SESSION[sid] = pub
+        return pub
+
+    @app.post("/v1/interview/finish")
+    async def interview_finish(
+            x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
+    ):
+        sid = _sid(x_session_id)
+        await _ensure_session_initialized(app, sid)
+
+        engine: InterviewEngine = app.state.engine
+        st = await engine.resume(thread_id=sid, resume_payload={"action": ClientAction.FINISH})
         pub = _public_state(dict(st))
         PUBLIC_STATE_BY_SESSION[sid] = pub
         return pub

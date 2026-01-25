@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional, Dict, Any
 import requests
 
 
@@ -12,7 +12,6 @@ class SessionView:
     phase: str
     turn: int
 
-    # NEW: level-based progression
     current_level: int
     last_passed_level: int
     batch_level: int
@@ -22,12 +21,16 @@ class SessionView:
     interview_done: bool
     final_level: int
 
-    # UI text
     current_question: str
     assistant_text: str
     transcript: str
     can_proceed: bool
     allowed_actions: List[str]
+
+    # ✅ new
+    interrupt: Optional[Dict[str, Any]] = None
+    download: Optional[Dict[str, str]] = None
+    summary: Optional[Dict[str, str]] = None
 
 
 class ApiClient:
@@ -94,6 +97,15 @@ class ApiClient:
         r.raise_for_status()
         return self._parse(r.json())
 
+    def finish(self, *, session_id: str) -> SessionView:
+        r = requests.post(
+            f"{self.base_url}/v1/interview/finish",
+            timeout=self.timeout_s,
+            headers={"X-Session-Id": session_id},
+        )
+        r.raise_for_status()
+        return self._parse(r.json())
+
     @staticmethod
     def _parse(j: dict) -> SessionView:
         return SessionView(
@@ -115,4 +127,9 @@ class ApiClient:
             transcript=j.get("transcript", ""),
             can_proceed=bool(j.get("can_proceed", False)),
             allowed_actions=list(j.get("allowed_actions", [])),
+
+            # ✅ new
+            interrupt=j.get("interrupt"),
+            download=j.get("download"),
+            summary=j.get("summary"),
         )

@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     WHISPER_COMPUTE_TYPE:str = Field(default="")
     WHISPER_LANGUAGE:Optional[str] = Field(default=None)
     MAX_TURNS:int = Field(default=MAX_TURNS)
+    QUESTIONS_PER_LEVEL:int = Field(default=3)
+    MIN_PASSED_FOR_LEVEL:int = Field(default=2)
 
 
 def load_settings_or_die() -> Settings:

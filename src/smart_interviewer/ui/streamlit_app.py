@@ -1,6 +1,7 @@
 # smart_interviewer/ui/streamlit_app.py
 from __future__ import annotations
 
+import base64
 import time
 import uuid
 import streamlit as st
@@ -89,6 +90,29 @@ with st.sidebar:
 # Main
 # ----------------------------
 s = ensure_state()
+if getattr(s, "summary", None):
+    st.divider()
+    st.subheader("📄 Summary")
+
+    data_b64 = (s.summary.get("data_base64") or "").strip()
+    filename = s.summary.get("filename") or "interview_summary.json"
+    ctype = s.summary.get("content_type") or "application/json"
+
+    if data_b64:
+        file_bytes = base64.b64decode(data_b64.encode("ascii"))
+        st.download_button(
+            label="⬇️ Download summary (JSON)",
+            data=file_bytes,
+            file_name=filename,
+            mime=ctype,
+            use_container_width=True,
+        )
+
+    finish_disabled = (ClientAction.FINISH not in s.allowed_actions)
+    if st.button("✅ Finish", use_container_width=True, disabled=finish_disabled):
+        s2 = api.finish(session_id=st.session_state.session_id)
+        st.session_state.server = s2
+        st.rerun()
 
 # Top status panel
 c1, c2, c3, c4 = st.columns(4)
@@ -111,90 +135,95 @@ st.caption(f"Phase: `{s.phase}` | Allowed: `{', '.join(s.allowed_actions) or '�
 if s.interview_done:
     st.success(f"✅ Interview finished. Final level: **{int(s.final_level)}**")
 
+
+
+
 st.divider()
 
 # Chat window
-for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
+if not getattr(s, "summary", None):
+    for m in st.session_state.messages:
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
 
-# Controls row
-colA, colB, colC = st.columns(3)
+    # Controls row
+    colA, colB, colC = st.columns(3)
 
-with colA:
-    start_disabled = (ClientAction.START not in s.allowed_actions) or s.interview_done
-    if st.button("🚀 Start", use_container_width=True, disabled=start_disabled):
-        try:
-            s2 = api.start(session_id=st.session_state.session_id)
-            st.session_state.server = s2
-            if not s2.interview_done and s2.current_question:
-                st.session_state.messages.append({"role": "assistant", "content": f"**Question:** {s2.current_question}"})
+    with colA:
+        start_disabled = (ClientAction.START not in s.allowed_actions) or s.interview_done
+        if st.button("🚀 Start", use_container_width=True, disabled=start_disabled):
+            try:
+                s2 = api.start(session_id=st.session_state.session_id)
+                st.session_state.server = s2
+                if not s2.interview_done and s2.current_question:
+                    st.session_state.messages.append({"role": "assistant", "content": f"**Question:** {s2.current_question}"})
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+
+    with colB:
+        next_disabled = (not s.can_proceed) or (ClientAction.NEXT not in s.allowed_actions)
+        if st.button("➡️ Next", use_container_width=True, disabled=next_disabled):
+            try:
+                s2 = api.next(session_id=st.session_state.session_id)
+                st.session_state.server = s2
+                if not s2.interview_done and s2.current_question:
+                    st.session_state.messages.append({"role": "assistant", "content": f"**Question:** {s2.current_question}"})
+                else:
+                    # if the interview ended, show final message in chat too
+                    if s2.interview_done:
+                        st.session_state.messages.append(
+                            {"role": "assistant", "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
+                        )
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+
+    with colC:
+        if st.button("🧹 Clear chat", use_container_width=True):
+            st.session_state.messages = []
             st.rerun()
-        except Exception as e:
-            st.error(str(e))
 
-with colB:
-    next_disabled = s.interview_done or (not s.can_proceed) or (ClientAction.NEXT not in s.allowed_actions)
-    if st.button("➡️ Next", use_container_width=True, disabled=next_disabled):
+    st.divider()
+
+    # Voice input (only meaningful in AWAITING_ANSWER)
+    audio = st.audio_input("Record your answer", sample_rate=16000)
+
+    send_disabled = s.interview_done or (audio is None) or (ClientAction.ANSWER not in s.allowed_actions)
+    send_clicked = st.button("📨 Send Answer", use_container_width=True, disabled=send_disabled)
+
+    if audio is not None:
+        st.audio(audio, format="audio/wav")
+
+    if send_clicked and audio is not None:
+        st.session_state.messages.append({"role": "user", "content": "🎙️ (voice answer)"})
+
         try:
-            s2 = api.next(session_id=st.session_state.session_id)
+            audio_bytes = audio.getvalue()
+            s2 = api.answer(
+                audio_bytes=audio_bytes,
+                filename=f"voice_{int(time.time())}.wav",
+                content_type="audio/wav",
+                session_id=st.session_state.session_id,
+            )
             st.session_state.server = s2
-            if not s2.interview_done and s2.current_question:
-                st.session_state.messages.append({"role": "assistant", "content": f"**Question:** {s2.current_question}"})
-            else:
-                # if the interview ended, show final message in chat too
-                if s2.interview_done:
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
-                    )
-            st.rerun()
         except Exception as e:
-            st.error(str(e))
+            st.session_state.messages.append({"role": "assistant", "content": f"❌ Answer failed: `{e}`"})
+            st.rerun()
 
-with colC:
-    if st.button("🧹 Clear chat", use_container_width=True):
-        st.session_state.messages = []
-        st.rerun()
-
-st.divider()
-
-# Voice input (only meaningful in AWAITING_ANSWER)
-audio = st.audio_input("Record your answer", sample_rate=16000)
-
-send_disabled = s.interview_done or (audio is None) or (ClientAction.ANSWER not in s.allowed_actions)
-send_clicked = st.button("📨 Send Answer", use_container_width=True, disabled=send_disabled)
-
-if audio is not None:
-    st.audio(audio, format="audio/wav")
-
-if send_clicked and audio is not None:
-    st.session_state.messages.append({"role": "user", "content": "🎙️ (voice answer)"})
-
-    try:
-        audio_bytes = audio.getvalue()
-        s2 = api.answer(
-            audio_bytes=audio_bytes,
-            filename=f"voice_{int(time.time())}.wav",
-            content_type="audio/wav",
-            session_id=st.session_state.session_id,
-        )
-        st.session_state.server = s2
-    except Exception as e:
-        st.session_state.messages.append({"role": "assistant", "content": f"❌ Answer failed: `{e}`"})
-        st.rerun()
-
-    # show transcript + feedback
-    st.session_state.messages.append(
-        {"role": "assistant", "content": f"**Transcript:** {s2.transcript or '_(empty)_'}"}
-    )
-    st.session_state.messages.append(
-        {"role": "assistant", "content": f"**Feedback:**\n\n{s2.assistant_text}"}
-    )
-
-    # If interview ended after evaluation, show final in chat
-    if s2.interview_done:
+        # show transcript + feedback
         st.session_state.messages.append(
-            {"role": "assistant", "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
+            {"role": "assistant", "content": f"**Transcript:** {s2.transcript or '_(empty)_'}"}
+        )
+        st.session_state.messages.append(
+            {"role": "assistant", "content": f"**Feedback:**\n\n{s2.assistant_text}"}
         )
 
-    st.rerun()
+        # If interview ended after evaluation, show final in chat
+        if s2.interview_done:
+            st.session_state.messages.append(
+                {"role": "assistant", "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
+            )
+
+        st.rerun()
+

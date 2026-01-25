@@ -6,9 +6,11 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi[standard]>=0.128.0",
     "faster-whisper>=1.2.1",
+    "ipython>=9.9.0",
     "langchain>=1.2.6",
     "langchain-openai>=1.1.7",
     "langgraph>=1.0.6",
+    "pyppeteer>=0.0.25",
     "requests>=2.32.5",
     "streamlit>=1.53.0",
     "streamlit-audiorec>=0.1.3",

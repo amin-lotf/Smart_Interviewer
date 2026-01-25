@@ -1,27 +1,26 @@
 # smart_interviewer/core.py
 from __future__ import annotations
 
+import base64
 import json
 import os
 import random
 import re
-import tempfile
-from dataclasses import dataclass, field
+from datetime import timezone, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Optional, TypedDict, List, Literal, Any, cast, Annotated, Dict, Tuple
+from typing import TypedDict, List, Literal, Any, Annotated,Tuple
 
 import anyio
-from faster_whisper import WhisperModel
-
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
-
 from langgraph.graph import StateGraph, START, END, add_messages
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import interrupt, Command  # LangGraph 1.0
 
 from smart_interviewer.settings import settings
+from smart_interviewer.transcriber import WhisperTranscriber
+from smart_interviewer.utils import load_question_bank_from_md, InterviewItem
 
 
 # -----------------------------
@@ -33,6 +32,7 @@ class AgentPhase(StrEnum):
     AWAITING_ANSWER = "AWAITING_ANSWER"
     AWAITING_NEXT = "AWAITING_NEXT"
     EVALUATED = "EVALUATED"
+    AWAITING_FINISH = "AWAITING_FINISH"
     DONE = "DONE"
 
 
@@ -41,141 +41,20 @@ class ClientAction(StrEnum):
     NEXT = "NEXT"
     ANSWER = "ANSWER"
     RETRY = "RETRY"
+    FINISH = "FINISH"
 
 
-# -----------------------------
-# Question bank model
-# -----------------------------
-@dataclass(frozen=True, slots=True)
-class InterviewItem:
+class TurnLog(TypedDict):
     level: int
+    turn: int
     item_id: str
     context: str
     objective: str
     question: str
+    answer: str
+    correct: bool
+    evaluation: str
 
-
-@dataclass(frozen=True, slots=True)
-class QuestionBank:
-    # level -> list[InterviewItem]
-    items_by_level: Dict[int, List[InterviewItem]]
-
-    @property
-    def levels_sorted(self) -> List[int]:
-        return sorted(self.items_by_level.keys())
-
-    def has_level(self, level: int) -> bool:
-        return level in self.items_by_level and bool(self.items_by_level[level])
-
-    def max_level(self) -> int:
-        return max(self.items_by_level.keys()) if self.items_by_level else 0
-
-
-LEVEL_RE = re.compile(r"^\s*#\s*Level\s*(\d+)\b", re.IGNORECASE)
-ITEM_RE = re.compile(r"^\s*##\s*Item:\s*(.+?)\s*$", re.IGNORECASE)
-
-
-def load_question_bank_from_md(path: str | Path) -> QuestionBank:
-    """
-    Parses a markdown file like:
-
-    #Level 1 — ...
-    ##Item: LLM-definition
-    context:
-    ...
-    objective:
-    ...
-    question:
-    ...
-
-    Returns QuestionBank(level -> items).
-    """
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Question file not found: {p}")
-
-    text = p.read_text(encoding="utf-8", errors="ignore")
-    lines = text.splitlines()
-
-    cur_level: Optional[int] = None
-    cur_item_id: Optional[str] = None
-
-    cur_context: List[str] = []
-    cur_objective: List[str] = []
-    cur_question: List[str] = []
-
-    section: Optional[str] = None  # "context"|"objective"|"question"|None
-    out: Dict[int, List[InterviewItem]] = {}
-
-    def flush_item() -> None:
-        nonlocal cur_level, cur_item_id, cur_context, cur_objective, cur_question, section
-        if cur_level is None or cur_item_id is None:
-            return
-        ctx = "\n".join([x.rstrip() for x in cur_context]).strip()
-        obj = "\n".join([x.rstrip() for x in cur_objective]).strip()
-        q = "\n".join([x.rstrip() for x in cur_question]).strip()
-        # Only keep valid items with a question
-        if q:
-            out.setdefault(cur_level, []).append(
-                InterviewItem(
-                    level=cur_level,
-                    item_id=cur_item_id.strip(),
-                    context=ctx,
-                    objective=obj,
-                    question=q,
-                )
-            )
-        # reset item buffers
-        cur_item_id = None
-        cur_context = []
-        cur_objective = []
-        cur_question = []
-        section = None
-
-    for raw in lines:
-        line = raw.rstrip("\n")
-
-        m_level = LEVEL_RE.match(line)
-        if m_level:
-            # new level flush any pending item
-            flush_item()
-            cur_level = int(m_level.group(1))
-            out.setdefault(cur_level, [])
-            continue
-
-        m_item = ITEM_RE.match(line)
-        if m_item:
-            # new item flush previous item
-            flush_item()
-            cur_item_id = m_item.group(1).strip()
-            continue
-
-        low = line.strip().lower()
-        if low == "context:":
-            section = "context"
-            continue
-        if low == "objective:":
-            section = "objective"
-            continue
-        if low == "question:":
-            section = "question"
-            continue
-
-        # accumulate
-        if cur_level is None or cur_item_id is None:
-            continue
-        if section == "context":
-            cur_context.append(line)
-        elif section == "objective":
-            cur_objective.append(line)
-        elif section == "question":
-            cur_question.append(line)
-        else:
-            # ignore unrelated lines inside item
-            continue
-
-    flush_item()
-    return QuestionBank(items_by_level=out)
 
 
 def _bank_path() -> Path:
@@ -239,41 +118,15 @@ class InterviewState(TypedDict, total=False):
 
     # memory/messages
     messages: Annotated[List[BaseMessage], add_messages]
+    turns_log: List[TurnLog]
+    started_at: str  # optional
+    finished_at: str  # optional
+    summary_filename: str
+    summary_content_type: str
+    summary_data_base64: str
 
 
-# -----------------------------
-# Transcriber
-# -----------------------------
-@dataclass
-class WhisperTranscriber:
-    model_name: str = "small"
-    device: str = "cpu"
-    compute_type: str = "int8"
-    language: Optional[str] = None
-    _model: WhisperModel = field(init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        self._model = WhisperModel(self.model_name, device=self.device, compute_type=self.compute_type)
-
-    def transcribe_bytes(self, audio_bytes: bytes, suffix: str = ".webm") -> str:
-        if not audio_bytes:
-            return ""
-        with tempfile.NamedTemporaryFile(delete=True, suffix=suffix) as f:
-            f.write(audio_bytes)
-            f.flush()
-
-            segments, _info = self._model.transcribe(
-                f.name,
-                language=self.language,
-                vad_filter=True,
-            )
-
-            parts: list[str] = []
-            for seg in segments:
-                t = (seg.text or "").strip()
-                if t:
-                    parts.append(t)
-            return " ".join(parts).strip()
 
 
 # -----------------------------
@@ -281,9 +134,27 @@ class WhisperTranscriber:
 # -----------------------------
 LLM = ChatOpenAI(
     model="gpt-4o-mini",
-    temperature=0.2,
+    temperature=0.3,
     api_key=settings.OPENAI_API_KEY,
 )
+
+
+ASK_SYS = (
+    "You are an interview question generator.\n"
+    "You will be given:\n"
+    "- Level (difficulty)\n"
+    "- Reference context\n"
+    "- Objective (what we want to verify)\n"
+    "- Previously asked questions (optional)\n\n"
+    "Your job:\n"
+    "- Ask ONE clear interview question that tests the objective using the context.\n"
+    "- Do NOT include the answer.\n"
+    "- Do NOT quote the context verbatim unless absolutely necessary.\n"
+    "- Keep it concise (one sentence preferred).\n"
+    "- Avoid repeating previously asked questions.\n\n"
+    "Return ONLY the question text. No JSON. No markdown."
+)
+
 
 EVAL_SYS = (
     "You are a strict-but-fair interview grader.\n"
@@ -308,6 +179,7 @@ EVAL_SYS = (
 # -----------------------------
 def initial_state() -> InterviewState:
     # user level assumed 0, so we TEST level 1 first
+    now = datetime.now(timezone.utc).isoformat()
     return {
         "phase": AgentPhase.IDLE,
         "turn": 0,
@@ -323,7 +195,7 @@ def initial_state() -> InterviewState:
         "current_level": 1,
         "last_passed_level": 0,
 
-        "batch_size": 3,
+        "batch_size": settings.QUESTIONS_PER_LEVEL,
         "batch_index": 0,
         "batch_correct": 0,
         "batch_item_ids": [],
@@ -335,6 +207,12 @@ def initial_state() -> InterviewState:
 
         "interview_done": False,
         "final_level": 0,
+        "turns_log": [],
+        "started_at": now,
+        "finished_at": "",
+        "summary_filename": "",
+        "summary_content_type": "",
+        "summary_data_base64": "",
     }
 
 
@@ -384,17 +262,84 @@ def _get_item(level: int, item_id: str) -> InterviewItem:
     raise KeyError(f"Item not found: level={level}, item_id={item_id!r}")
 
 
-def _required_correct_for_batch(n: int) -> int:
-    """
-    For 3 questions => need 2.
-    If fewer questions exist, be reasonable:
-      n=2 => need 2? (too strict) => require 1 (n-1)
-      n=1 => require 1
-    """
-    if n >= 3:
-        return 2
-    return max(1, n - 1)
+def _required_correct_for_batch(cur_n_questions: int) -> int:
+    if cur_n_questions >= settings.MIN_PASSED_FOR_LEVEL:
+        if settings.MIN_PASSED_FOR_LEVEL <= settings.QUESTIONS_PER_LEVEL:
+            return settings.MIN_PASSED_FOR_LEVEL
+        else:
+            return settings.QUESTIONS_PER_LEVEL
+    return max(1, cur_n_questions)
 
+def _extract_previous_questions(messages: List[BaseMessage], limit: int = 8) -> List[str]:
+    """
+    Pulls prior questions from AIMessage contents like: "[L2][item] Q5: <question>"
+    Best-effort only.
+    """
+    out: List[str] = []
+    if not messages:
+        return out
+
+    # scan from newest to oldest
+    for m in reversed(messages):
+        if isinstance(m, AIMessage):
+            txt = (m.content or "").strip()
+            # match "Q<turn>: <question>"
+            mm = re.search(r"\bQ\d+\s*:\s*(.+)$", txt)
+            if mm:
+                q = mm.group(1).strip()
+                if q:
+                    out.append(q)
+        if len(out) >= limit:
+            break
+
+    # return in chronological-ish order
+    return list(reversed(out))
+
+
+async def _generate_question_for_item(
+    *,
+    level: int,
+    turn: int,
+    item_id: str,
+    context: str,
+    objective: str,
+    prev_questions: List[str],
+) -> str:
+    prev_block = ""
+    if prev_questions:
+        prev_block = "\n".join(f"- {q}" for q in prev_questions[-8:])
+
+    prompt = [
+        SystemMessage(content=ASK_SYS),
+        HumanMessage(
+            content=(
+                f"Level: {level}\n"
+                f"Turn: {turn}\n"
+                f"Item ID: {item_id}\n\n"
+                f"Reference context:\n{context}\n\n"
+                f"Objective:\n{objective}\n\n"
+                + (f"Previously asked questions:\n{prev_block}\n\n" if prev_block else "")
+                + "Generate the next question now."
+            )
+        ),
+    ]
+
+    resp = await LLM.ainvoke(prompt)
+    q = (resp.content or "").strip()
+
+    # Safety cleanup
+    q = re.sub(r"^[-*\d.\s]+", "", q).strip()  # remove bullet/numbering
+    q = q.strip('"“”')  # remove wrapping quotes
+
+    # Hard fallback
+    if not q or len(q) < 5:
+        q = "Explain the key idea in your own words and why it matters."
+
+    # Ensure it ends like a question (optional but nice)
+    if not q.endswith("?"):
+        q = q.rstrip(".") + "?"
+
+    return q
 
 # -----------------------------
 # Graph nodes (LangGraph 1.0)
@@ -485,7 +430,16 @@ async def node_ask_question(state: InterviewState) -> InterviewState:
     item = _get_item(level=level, item_id=item_id)
 
     turn = int(state.get("turn") or 0) + 1
-    q = (item.question or "").strip() or "What does LLM stand for?"
+    prev_questions = _extract_previous_questions(list(state.get("messages") or []), limit=8)
+
+    q = await _generate_question_for_item(
+        level=level,
+        turn=turn,
+        item_id=item_id,
+        context=(item.context or "").strip(),
+        objective=(item.objective or "").strip(),
+        prev_questions=prev_questions,
+    )
 
     new_messages = [AIMessage(content=f"[L{level}][{item_id}] Q{turn}: {q}")]
     return {
@@ -655,6 +609,20 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
 
     new_messages = [AIMessage(content=f"Feedback: {feedback}")]
 
+    log_entry: TurnLog = {
+        "level": int(state.get("batch_level") or level),  # batch_level is the tested level
+        "turn": int(state.get("turn") or 0),
+        "item_id": str(state.get("current_item_id") or ""),
+        "context": ctx,
+        "objective": obj,
+        "question": q,
+        "answer": a,
+        "correct": bool(correct),
+        "evaluation": reason,  # short evaluation
+    }
+
+    turns_log = list(state.get("turns_log") or [])
+    turns_log.append(log_entry)
     # UI: ALWAYS allow Next (even if done -> Next will route to end)
     return {
         **state,
@@ -673,12 +641,11 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
         "last_passed_level": last_passed_level,
         "interview_done": interview_done,
         "final_level": final_level,
+        "turns_log": turns_log,
     }
 
 
-def route_after_eval(state: InterviewState) -> Literal["wait_next", "end"]:
-    if bool(state.get("interview_done")):
-        return "end"
+def route_after_eval(state: InterviewState) -> Literal["wait_next"]:
     return "wait_next"
 
 
@@ -700,7 +667,52 @@ async def node_wait_next(state: InterviewState) -> InterviewState:
     return {**s, "phase": AgentPhase.IDLE}
 
 
-async def node_end(state: InterviewState) -> InterviewState:
+def _build_summary_payload(state: InterviewState) -> dict:
+    final_level = int(state.get("final_level") or state.get("last_passed_level") or 0)
+    return {
+        "meta": {
+            "app": "smart_interviewer",
+            "started_at": state.get("started_at") or "",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "final_level": final_level,
+            "turns": int(state.get("turn") or 0),
+        },
+        "items": list(state.get("turns_log") or []),
+    }
+
+
+async def node_prepare_finish(state: InterviewState) -> InterviewState:
+    summary = _build_summary_payload(state)
+    json_text = json.dumps(summary, ensure_ascii=False, indent=2)
+
+    data_b64 = base64.b64encode(json_text.encode("utf-8")).decode("ascii")
+
+    return {
+        **state,
+        "phase": AgentPhase.AWAITING_FINISH,
+        "assistant_text": "Interview complete. Download the summary, then click Finish.",
+        "allowed_actions": [ClientAction.FINISH],
+        "can_proceed": True,
+
+        "summary_filename": "interview_summary.json",
+        "summary_content_type": "application/json",
+        "summary_data_base64": data_b64,
+    }
+
+
+async def node_wait_finish(state: InterviewState) -> InterviewState:
+    resume = interrupt(
+        {
+            "type": "await_action",
+            "allowed_actions": [ClientAction.FINISH],
+            "message": "Click Finish to close the interview.",
+        }
+    )
+    _require_action(resume, ClientAction.FINISH)
+    return {**state}  # move on
+
+
+async def node_finalize(state: InterviewState) -> InterviewState:
     final_level = int(state.get("final_level") or state.get("last_passed_level") or 0)
     return {
         **state,
@@ -710,6 +722,11 @@ async def node_end(state: InterviewState) -> InterviewState:
         "can_proceed": False,
     }
 
+
+def route_after_next(state: InterviewState) -> Literal["ask", "finish"]:
+    if bool(state.get("interview_done")):
+        return "finish"
+    return "ask"
 
 # -----------------------------
 # Build graph (LangGraph 1.0)
@@ -727,7 +744,11 @@ def build_interview_graph(*, transcriber: WhisperTranscriber):
     g.add_node("transcribe", transcribe_node)
     g.add_node("evaluate", node_evaluate)
     g.add_node("wait_next", node_wait_next)
-    g.add_node("end", node_end)
+
+    # finish flow (3-step)
+    g.add_node("finish_prepare", node_prepare_finish)
+    g.add_node("finish_wait", node_wait_finish)
+    g.add_node("finish_finalize", node_finalize)
 
     g.add_edge(START, "wait_start")
     g.add_edge("wait_start", "ask_question")
@@ -735,14 +756,23 @@ def build_interview_graph(*, transcriber: WhisperTranscriber):
     g.add_edge("wait_answer", "transcribe")
     g.add_edge("transcribe", "evaluate")
 
+    # evaluate -> always go to wait_next (user clicks Next)
     g.add_conditional_edges(
         "evaluate",
         route_after_eval,
-        {"wait_next": "wait_next", "end": "end"},
+        {"wait_next": "wait_next"},
     )
 
-    g.add_edge("wait_next", "ask_question")
-    g.add_edge("end", END)
+    # ✅ ONLY ONE conditional branch from wait_next
+    g.add_conditional_edges(
+        "wait_next",
+        route_after_next,
+        {"ask": "ask_question", "finish": "finish_prepare"},
+    )
+
+    g.add_edge("finish_prepare", "finish_wait")
+    g.add_edge("finish_wait", "finish_finalize")
+    g.add_edge("finish_finalize", END)
 
     checkpointer = InMemorySaver()
     return g.compile(checkpointer=checkpointer)
@@ -769,3 +799,14 @@ class InterviewEngine:
             config={"configurable": {"thread_id": thread_id}},
         )
         return out
+
+
+if __name__ == "__main__":
+    transcriber = WhisperTranscriber(
+        model_name='small',
+        device='cpu',
+        compute_type='int8',
+        language=None,
+    )
+    engine = InterviewEngine(transcriber=transcriber)
+    engine._graph.get_graph().draw_mermaid_png(output_file_path='flow.png')
