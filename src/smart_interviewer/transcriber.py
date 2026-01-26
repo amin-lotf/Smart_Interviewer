@@ -1,6 +1,6 @@
 import tempfile
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, AsyncIterator
 
 from faster_whisper import WhisperModel
 
@@ -35,3 +35,26 @@ class WhisperTranscriber:
                 if t:
                     parts.append(t)
             return " ".join(parts).strip()
+
+    async def transcribe_bytes_stream(self, audio_bytes: bytes, suffix: str = ".webm") -> AsyncIterator[str]:
+        """
+        Streams transcription segments as they are produced by Whisper.
+        Yields individual text segments.
+        """
+        if not audio_bytes:
+            return
+
+        with tempfile.NamedTemporaryFile(delete=True, suffix=suffix) as f:
+            f.write(audio_bytes)
+            f.flush()
+
+            segments, _info = self._model.transcribe(
+                f.name,
+                language=self.language,
+                vad_filter=True,
+            )
+
+            for seg in segments:
+                t = (seg.text or "").strip()
+                if t:
+                    yield t

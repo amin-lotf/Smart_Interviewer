@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Iterator
 import requests
+import json
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,27 @@ class ApiClient:
         r.raise_for_status()
         return self._parse(r.json())
 
+    def start_stream(self, *, session_id: str) -> Iterator[Dict[str, Any]]:
+        """
+        Streams question generation as it's generated.
+        Yields dicts with either {"token": "..."} or {"final_state": SessionView}
+        """
+        r = requests.post(
+            f"{self.base_url}/v1/interview/start/stream",
+            timeout=self.timeout_s,
+            headers={"X-Session-Id": session_id},
+            stream=True,
+        )
+        r.raise_for_status()
+
+        for line in r.iter_lines():
+            if line:
+                data = json.loads(line)
+                if "token" in data:
+                    yield {"token": data["token"]}
+                elif "final_state" in data:
+                    yield {"final_state": self._parse(data["final_state"])}
+
     def next(self, *, session_id: str) -> SessionView:
         r = requests.post(
             f"{self.base_url}/v1/interview/next",
@@ -78,6 +100,27 @@ class ApiClient:
         )
         r.raise_for_status()
         return self._parse(r.json())
+
+    def next_stream(self, *, session_id: str) -> Iterator[Dict[str, Any]]:
+        """
+        Streams next question generation as it's generated.
+        Yields dicts with either {"token": "..."} or {"final_state": SessionView}
+        """
+        r = requests.post(
+            f"{self.base_url}/v1/interview/next/stream",
+            timeout=self.timeout_s,
+            headers={"X-Session-Id": session_id},
+            stream=True,
+        )
+        r.raise_for_status()
+
+        for line in r.iter_lines():
+            if line:
+                data = json.loads(line)
+                if "token" in data:
+                    yield {"token": data["token"]}
+                elif "final_state" in data:
+                    yield {"final_state": self._parse(data["final_state"])}
 
     def answer(
         self,
@@ -96,6 +139,64 @@ class ApiClient:
         )
         r.raise_for_status()
         return self._parse(r.json())
+
+    def answer_stream(
+        self,
+        *,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str,
+        session_id: str,
+    ) -> Iterator[Dict[str, Any]]:
+        """
+        Streams full answer flow: transcript -> evaluation -> follow-up (if needed).
+        Yields dicts with:
+        - {"type": "transcript", "text": "..."}
+        - {"type": "eval_token", "token": "..."}
+        - {"type": "evaluation", "verdict": "...", "reason": "..."}
+        - {"type": "followup_question", "question": "..."}
+        - {"final_state": SessionView}
+        """
+        files = {"audio": (filename, audio_bytes, content_type)}
+        r = requests.post(
+            f"{self.base_url}/v1/interview/answer/stream",
+            files=files,
+            timeout=self.timeout_s,
+            headers={"X-Session-Id": session_id},
+            stream=True,
+        )
+        r.raise_for_status()
+
+        for line in r.iter_lines():
+            if line:
+                data = json.loads(line)
+                if "final_state" in data:
+                    yield {"final_state": self._parse(data["final_state"])}
+                else:
+                    yield data
+
+    def evaluate_stream(self, *, session_id: str) -> Iterator[Dict[str, Any]]:
+        """
+        Streams evaluation feedback as it's generated.
+        Yields dicts with {"token": "..."} or {"evaluation": {"verdict": "...", "reason": "..."}}
+        """
+        r = requests.post(
+            f"{self.base_url}/v1/interview/evaluate/stream",
+            timeout=self.timeout_s,
+            headers={"X-Session-Id": session_id},
+            stream=True,
+        )
+        r.raise_for_status()
+
+        for line in r.iter_lines():
+            if line:
+                data = json.loads(line)
+                if "token" in data:
+                    yield {"token": data["token"]}
+                elif "evaluation" in data:
+                    yield {"evaluation": data["evaluation"]}
+                elif "error" in data:
+                    yield {"error": data["error"]}
 
     def finish(self, *, session_id: str) -> SessionView:
         r = requests.post(

@@ -12,7 +12,7 @@ import re
 from datetime import timezone, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TypedDict, List, Literal, Any, Annotated, Tuple
+from typing import TypedDict, List, Literal, Any, Annotated, Tuple, AsyncIterator
 
 import anyio
 from langchain_openai import ChatOpenAI
@@ -186,7 +186,7 @@ EVAL_SYS = (
     "- It must be narrower than the original question.\n"
     "- It must NOT repeat the whole original question.\n"
     "- It must NOT introduce a new topic.\n"
-    "- One sentence, ends with '?'.\n\n"
+    
     "Return JSON ONLY with exactly these keys:\n"
     '{"verdict": "correct|incorrect|needs_more", "reason": "...", "next_question": "..."}\n'
     "If verdict != needs_more, set next_question to empty string.\n"
@@ -353,7 +353,7 @@ async def _generate_question_for_item(
 
     # Safety cleanup
     q = re.sub(r"^[-*\d.\s]+", "", q).strip()  # remove bullet/numbering
-    q = q.strip('"“”')  # remove wrapping quotes
+    q = q.strip('"""')  # remove wrapping quotes
 
     # Hard fallback
     if not q or len(q) < 5:
@@ -364,6 +364,56 @@ async def _generate_question_for_item(
         q = q.rstrip(".") + "?"
 
     return q
+
+
+async def _generate_question_for_item_stream(
+    *,
+    level: int,
+    turn: int,
+    item_id: str,
+    context: str,
+    objective: str,
+    prev_questions: List[str],
+) -> AsyncIterator[str]:
+    """
+    Streams question generation token by token.
+    Yields cleaned tokens as they arrive.
+    """
+    prev_block = ""
+    if prev_questions:
+        prev_block = "\n".join(f"- {q}" for q in prev_questions[-8:])
+
+    prompt = [
+        SystemMessage(content=ASK_SYS),
+        HumanMessage(
+            content=(
+                f"Level: {level}\n"
+                f"Turn: {turn}\n"
+                f"Item ID: {item_id}\n\n"
+                f"Reference context:\n{context}\n\n"
+                f"Objective:\n{objective}\n\n"
+                + (f"Previously asked questions:\n{prev_block}\n\n" if prev_block else "")
+                + "Generate the next question now."
+            )
+        ),
+    ]
+
+    accumulated = ""
+    async for chunk in LLM.astream(prompt):
+        content = chunk.content if hasattr(chunk, 'content') else str(chunk)
+        if content:
+            accumulated += content
+            yield content
+
+    # Post-process accumulated text for safety
+    q = accumulated.strip()
+    q = re.sub(r"^[-*\d.\s]+", "", q).strip()
+    q = q.strip('"""')
+
+    if not q or len(q) < 5:
+        yield "\nExplain the key idea in your own words and why it matters?"
+    elif not q.endswith("?"):
+        yield "?"
 
 # -----------------------------
 # Graph nodes (LangGraph 1.0)
@@ -543,6 +593,60 @@ async def node_transcribe(state: InterviewState, *, transcriber: WhisperTranscri
     }
 
 
+async def _evaluate_answer_get_json(
+    *,
+    level: int,
+    question: str,
+    answer: str,
+    context: str,
+    objective: str,
+) -> str:
+    """Helper to get JSON evaluation response (non-streaming)."""
+    prompt = [
+        SystemMessage(content=EVAL_SYS),
+        HumanMessage(
+            content=(
+                f"Level: {level}\n"
+                f"Question: {question}\n\n"
+                f"Reference context:\n{context}\n\n"
+                f"Objective:\n{objective}\n\n"
+                f"Candidate answer:\n{answer}\n\n"
+                "Return JSON."
+            )
+        ),
+    ]
+    resp = await LLM.ainvoke(prompt)
+    return (resp.content or "").strip()
+
+
+async def _evaluate_answer_stream(
+    *,
+    level: int,
+    question: str,
+    answer: str,
+    context: str,
+    objective: str,
+) -> AsyncIterator[str]:
+    """Streams evaluation JSON response token by token."""
+    prompt = [
+        SystemMessage(content=EVAL_SYS),
+        HumanMessage(
+            content=(
+                f"Level: {level}\n"
+                f"Question: {question}\n\n"
+                f"Reference context:\n{context}\n\n"
+                f"Objective:\n{objective}\n\n"
+                f"Candidate answer:\n{answer}\n\n"
+                "Return JSON."
+            )
+        ),
+    ]
+    async for chunk in LLM.astream(prompt):
+        content = chunk.content if hasattr(chunk, 'content') else str(chunk)
+        if content:
+            yield content
+
+
 async def node_evaluate(state: InterviewState) -> InterviewState:
     q = (state.get("current_question") or "").strip()
     a = (state.get("text") or "").strip()
@@ -562,21 +666,13 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
     ctx = (state.get("current_context") or "").strip()
     obj = (state.get("current_objective") or "").strip()
 
-    prompt = [
-        SystemMessage(content=EVAL_SYS),
-        HumanMessage(
-            content=(
-                f"Level: {level}\n"
-                f"Question: {q}\n\n"
-                f"Reference context:\n{ctx}\n\n"
-                f"Objective:\n{obj}\n\n"
-                f"Candidate answer:\n{a}\n\n"
-                "Return JSON."
-            )
-        ),
-    ]
-    resp = await LLM.ainvoke(prompt)
-    raw = (resp.content or "").strip()
+    raw = await _evaluate_answer_get_json(
+        level=level,
+        question=q,
+        answer=a,
+        context=ctx,
+        objective=obj,
+    )
 
     verdict = "incorrect"
     reason = "Could not parse grading."
