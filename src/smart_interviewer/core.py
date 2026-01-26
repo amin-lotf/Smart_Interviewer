@@ -1,7 +1,39 @@
 # smart_interviewer/core.py
 from __future__ import annotations
 
-"""Interview orchestration and grading graph logic (LangGraph)."""
+"""
+Interview orchestration and grading logic using LangGraph.
+
+This module implements an adaptive interview system that:
+- Generates contextual questions based on difficulty level
+- Evaluates answers using LLM with follow-up capability
+- Automatically progresses through difficulty levels
+- Manages interview state using LangGraph's state machine
+
+Key Components:
+    - InterviewEngine: Main interface for running interviews
+    - InterviewState: TypedDict defining all state variables
+    - Graph Nodes: Individual steps in the interview flow
+    - Evaluation Functions: LLM-based answer assessment
+    - Level Progression: Logic for advancing through difficulties
+
+Example:
+    ```python
+    from smart_interviewer.core import InterviewEngine, WhisperTranscriber
+
+    transcriber = WhisperTranscriber(model_name="small")
+    engine = InterviewEngine(transcriber=transcriber)
+
+    # Start interview
+    state = await engine.init(thread_id="session-123")
+
+    # Process user actions
+    state = await engine.resume(
+        thread_id="session-123",
+        resume_payload={"action": "START"}
+    )
+    ```
+"""
 
 import base64
 import json
@@ -148,8 +180,8 @@ class InterviewState(TypedDict, total=False):
 # LLM setup (LangChain 1.0)
 # -----------------------------
 LLM = ChatOpenAI(
-    model="gpt-4o-mini",
-    temperature=0.3,
+    model=settings.LLM_MODEL,
+    temperature=settings.LLM_TEMPERATURE,
     api_key=settings.OPENAI_API_KEY,
 )
 
@@ -236,7 +268,7 @@ def initial_state() -> InterviewState:
         "root_question": "",
         "turn_attempts": [],
         "followups_used": 0,
-        "max_followups": 2,
+        "max_followups": settings.MAX_FOLLOWUP_QUESTIONS,
     }
 
 
@@ -627,7 +659,19 @@ async def _evaluate_answer_stream(
     context: str,
     objective: str,
 ) -> AsyncIterator[str]:
-    """Streams evaluation JSON response token by token."""
+    """
+    Streams evaluation JSON response token by token.
+
+    Args:
+        level: Current difficulty level
+        question: Question that was asked
+        answer: Candidate's answer
+        context: Reference context for the question
+        objective: Learning objective being tested
+
+    Yields:
+        Tokens from the LLM evaluation response
+    """
     prompt = [
         SystemMessage(content=EVAL_SYS),
         HumanMessage(
@@ -647,11 +691,158 @@ async def _evaluate_answer_stream(
             yield content
 
 
+def _parse_evaluation_result(raw: str, question: str, answer: str) -> Tuple[str, str, str]:
+    """
+    Parse the LLM's evaluation JSON response.
+
+    Args:
+        raw: Raw JSON string from LLM
+        question: Original question (for fallback logic)
+        answer: Candidate's answer (for fallback logic)
+
+    Returns:
+        Tuple of (verdict, reason, next_question)
+    """
+    verdict = "incorrect"
+    reason = "Could not parse grading."
+    next_q = ""
+
+    try:
+        data = json.loads(raw)
+        verdict = str(data.get("verdict") or "").strip().lower()
+        reason = (str(data.get("reason") or "").strip() or "No reason.")
+        next_q = (str(data.get("next_question") or "")).strip()
+        if verdict not in {"correct", "incorrect", "needs_more"}:
+            verdict = "incorrect"
+    except Exception:
+        # Fallback for specific known questions
+        if question.lower().startswith("what does llm stand for") and "large language model" in answer.lower():
+            verdict = "correct"
+            reason = "Correct."
+
+    return verdict, reason, next_q
+
+
+def _handle_followup_logic(
+    verdict: str,
+    next_q: str,
+    state: InterviewState,
+    turns_attempts: List[TurnAttempt],
+) -> InterviewState | None:
+    """
+    Handle follow-up question logic when verdict is 'needs_more'.
+
+    Args:
+        verdict: Evaluation verdict
+        next_q: Follow-up question text
+        state: Current interview state
+        turns_attempts: List of turn attempts
+
+    Returns:
+        New state dict if follow-up should be asked, None to continue normal flow
+    """
+    if verdict != "needs_more":
+        return None
+
+    used = int(state.get("followups_used") or 0)
+    max_fu = int(state.get("max_followups") or settings.MAX_FOLLOWUP_QUESTIONS)
+
+    if used < max_fu:
+        if not next_q:
+            next_q = "Can you add the missing detail?"
+
+        return {
+            **state,
+            "phase": AgentPhase.AWAITING_ANSWER,
+            "followups_used": used + 1,
+            "current_question": next_q,
+            "assistant_text": next_q,
+            "allowed_actions": [ClientAction.ANSWER],
+            "can_proceed": False,
+            "turn_attempts": turns_attempts,
+            "messages": [AIMessage(content=f"[follow-up] {next_q}")],
+        }
+
+    return None
+
+
+def _calculate_level_progression(
+    correct: bool,
+    state: InterviewState,
+) -> Tuple[bool, int, int, int, str]:
+    """
+    Calculate level progression after answering a question.
+
+    Args:
+        correct: Whether the answer was correct
+        state: Current interview state
+
+    Returns:
+        Tuple of (interview_done, final_level, current_level, last_passed_level, extra_line)
+    """
+    batch_correct = int(state.get("batch_correct") or 0) + (1 if correct else 0)
+    batch_index = int(state.get("batch_index") or 0) + 1
+    batch_item_ids = list(state.get("batch_item_ids") or [])
+    batch_n = len(batch_item_ids)
+
+    interview_done = False
+    final_level = int(state.get("final_level") or 0)
+    last_passed_level = int(state.get("last_passed_level") or 0)
+    current_level = int(state.get("current_level") or 1)
+    extra_line = ""
+
+    # Check if finished this level's batch
+    if batch_index >= batch_n:
+        need = _required_correct_for_batch(batch_n)
+
+        if batch_correct >= need:
+            # PASS this level
+            last_passed_level = current_level
+            next_level = current_level + 1
+
+            if QUESTION_BANK.has_level(next_level):
+                extra_line = f"\n\n✅ Passed Level {current_level} ({batch_correct}/{batch_n}). Next: Level {next_level}."
+                current_level = next_level
+            else:
+                # No more levels => interview done
+                interview_done = True
+                final_level = last_passed_level
+                extra_line = f"\n\n🏁 Passed Level {last_passed_level}. No more levels available. Final level: {final_level}."
+        else:
+            # FAIL this level => interview done
+            interview_done = True
+            final_level = last_passed_level
+            extra_line = (
+                f"\n\n❌ Failed Level {current_level} ({batch_correct}/{batch_n}). "
+                f"Final level: {final_level}."
+            )
+
+    return interview_done, final_level, current_level, last_passed_level, extra_line
+
+
 async def node_evaluate(state: InterviewState) -> InterviewState:
+    """
+    Evaluate the candidate's answer using LLM and determine next steps.
+
+    This node handles:
+    1. Getting LLM evaluation of the answer
+    2. Determining if a follow-up question is needed
+    3. Calculating level progression
+    4. Building feedback message
+
+    Args:
+        state: Current interview state
+
+    Returns:
+        Updated state with evaluation results
+    """
+    # Extract current state
     q = (state.get("current_question") or "").strip()
     a = (state.get("text") or "").strip()
     level = int(state.get("current_level") or 1)
     turns_attempts = list(state.get("turn_attempts") or [])
+
+    # Validation
     if not q:
         return {
             **state,
@@ -663,6 +854,7 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
     if not a:
         return state
 
+    # Get evaluation from LLM
     ctx = (state.get("current_context") or "").strip()
     obj = (state.get("current_objective") or "").strip()
 
@@ -674,24 +866,10 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
         objective=obj,
     )
 
-    verdict = "incorrect"
-    reason = "Could not parse grading."
-    next_q = ""
-    data: dict[str, Any] = {}
+    # Parse evaluation result
+    verdict, reason, next_q = _parse_evaluation_result(raw, q, a)
 
-    try:
-        data = json.loads(raw)
-        verdict = str(data.get("verdict") or "").strip().lower()
-        reason = (str(data.get("reason") or "").strip() or "No reason.")
-        next_q = (str(data.get("next_question") or "")).strip()
-        if verdict not in {"correct", "incorrect", "needs_more"}:
-            verdict = "incorrect"
-    except Exception:
-        if q.lower().startswith("what does llm stand for") and "large language model" in a.lower():
-            verdict = "correct"
-            reason = "Correct."
-
-        # --- append attempt (IMPORTANT: do this before branching) ---
+    # Record this attempt
     turns_attempts.append(
         {
             "question": q,
@@ -702,104 +880,55 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
         }
     )
 
-    # --- handle needs_more (no data loss now) ---
+    # Handle follow-up questions if needed
+    followup_state = _handle_followup_logic(verdict, next_q, state, turns_attempts)
+    if followup_state is not None:
+        return followup_state
+
+    # If follow-up budget exhausted, mark as incorrect
     if verdict == "needs_more":
-        used = int(state.get("followups_used") or 0)
-        max_fu = int(state.get("max_followups") or 2)
-
-        if used < max_fu:
-            if not next_q:
-                next_q = "Can you add the missing detail?"
-
-            return {
-                **state,
-                "phase": AgentPhase.AWAITING_ANSWER,
-                "followups_used": used + 1,
-
-                "current_question": next_q,  # new followup question
-                "assistant_text": next_q,
-                "allowed_actions": [ClientAction.ANSWER],
-                "can_proceed": False,
-
-                "turn_attempts": turns_attempts,  # <-- persist attempts
-                "messages": [AIMessage(content=f"[follow-up] {next_q}")],
-            }
-
-        # followup budget exhausted -> treat as incorrect and continue
         verdict = "incorrect"
-        # also update the last attempt's verdict to incorrect (optional but clean)
         turns_attempts[-1]["verdict"] = "incorrect"  # type: ignore
         turns_attempts[-1]["reason"] = "Follow-up limit reached. " + (turns_attempts[-1]["reason"] or "")
 
-    # now verdict is correct/incorrect -> proceed with your normal scoring
+    # Determine correctness and calculate progression
     correct = (verdict == "correct")
     if not reason:
         reason = "Correct." if correct else "Incorrect."
 
+    interview_done, final_level, current_level, last_passed_level, extra_line = _calculate_level_progression(correct, state)
 
-    # Update batch counters
-    batch_correct = int(state.get("batch_correct") or 0) + (1 if correct else 0)
-    batch_index = int(state.get("batch_index") or 0) + 1
-    batch_item_ids = list(state.get("batch_item_ids") or [])
-    batch_n = len(batch_item_ids)
-
-    # default: continue interview
-    interview_done = False
-    final_level = int(state.get("final_level") or 0)
-    last_passed_level = int(state.get("last_passed_level") or 0)
-    current_level = int(state.get("current_level") or 1)
-
-    extra_line = ""
-    # If finished this level's batch, decide pass/fail
-    if batch_index >= batch_n:
-        need = _required_correct_for_batch(batch_n)
-        if batch_correct >= need:
-            # PASS this level
-            last_passed_level = current_level
-            next_level = current_level + 1
-
-            if QUESTION_BANK.has_level(next_level):
-                extra_line = f"\n\n✅ Passed Level {current_level} ({batch_correct}/{batch_n}). Next: Level {next_level}."
-                # advance level and reset batch state for next level
-                current_level = next_level
-                batch_item_ids = []
-                batch_index = 0
-                batch_correct = 0
-            else:
-                # no more levels => done
-                interview_done = True
-                final_level = last_passed_level
-                extra_line = f"\n\n🏁 Passed Level {last_passed_level}. No more levels available. Final level: {final_level}."
-        else:
-            # FAIL this level => done, keep last_passed_level
-            interview_done = True
-            final_level = last_passed_level
-            extra_line = (
-                f"\n\n❌ Failed Level {current_level} ({batch_correct}/{batch_n}). "
-                f"Final level: {final_level}."
-            )
-
+    # Build feedback message
     feedback = f"{'✅ Correct' if correct else '❌ Not quite'} — {reason}{extra_line}"
-
     new_messages = [AIMessage(content=f"Feedback: {feedback}")]
 
+    # Create log entry
     log_entry: TurnLog = {
         "level": int(state.get("batch_level") or level),
         "turn": int(state.get("turn") or 0),
         "item_id": str(state.get("current_item_id") or ""),
         "context": ctx,
         "objective": obj,
-
         "root_question": str(state.get("root_question") or q),
         "attempts": turns_attempts,
-
         "correct": bool(correct),
         "final_reason": reason,
     }
 
     turns_log = list(state.get("turns_log") or [])
     turns_log.append(log_entry)
-    # UI: ALWAYS allow Next (even if done -> Next will route to end)
+
+    # Calculate updated batch counters
+    batch_correct = int(state.get("batch_correct") or 0) + (1 if correct else 0)
+    batch_index = int(state.get("batch_index") or 0) + 1
+    batch_item_ids = list(state.get("batch_item_ids") or [])
+
+    # Reset batch if advancing to next level
+    if interview_done or (batch_index >= len(batch_item_ids) and current_level != int(state.get("current_level") or 1)):
+        batch_item_ids = []
+        batch_index = 0
+        batch_correct = 0
+
     return {
         **state,
         "phase": AgentPhase.EVALUATED,
@@ -809,7 +938,6 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
         "last_correct": correct,
         "last_reason": reason,
         "messages": new_messages,
-
         "batch_correct": batch_correct,
         "batch_index": batch_index,
         "batch_item_ids": batch_item_ids,
@@ -818,8 +946,8 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
         "interview_done": interview_done,
         "final_level": final_level,
         "turns_log": turns_log,
-        "turn_attempts": [],  # <-- clear bundle for next item
-        "root_question": "",  # <-- clear
+        "turn_attempts": [],
+        "root_question": "",
     }
 
 
@@ -917,52 +1045,80 @@ def route_after_transcribe(state: InterviewState) -> Literal["evaluate","wait_ag
 # Build graph (LangGraph 1.0)
 # -----------------------------
 def build_interview_graph(*, transcriber: WhisperTranscriber):
+    """
+    Build the interview state machine using LangGraph.
+
+    Graph Flow:
+        START → wait_start → ask_question → wait_answer → transcribe
+                                  ↑              ↓
+                                  |         evaluate
+                                  |              ↓
+                                  └──── wait_next ──→ finish_prepare → finish_wait → finish_finalize → END
+
+    Key decision points:
+    - After transcribe: Check if transcript is valid, retry if empty
+    - After evaluate: Check if follow-up needed (verdict='needs_more')
+    - After wait_next: Check if interview done or continue with next question
+
+    Args:
+        transcriber: WhisperTranscriber instance for audio processing
+
+    Returns:
+        Compiled LangGraph with in-memory checkpointing
+    """
     g = StateGraph(InterviewState)
 
-    g.add_node("wait_start", node_wait_start)
-    g.add_node("ask_question", node_ask_question)
-    g.add_node("wait_answer", node_wait_answer)
+    # Main interview nodes
+    g.add_node("wait_start", node_wait_start)          # Wait for START action
+    g.add_node("ask_question", node_ask_question)      # Generate question using LLM
+    g.add_node("wait_answer", node_wait_answer)        # Wait for ANSWER action with audio
 
+    # Wrap transcribe node to inject transcriber dependency
     async def transcribe_node(state: InterviewState) -> InterviewState:
         return await node_transcribe(state, transcriber=transcriber)
 
-    g.add_node("transcribe", transcribe_node)
-    g.add_node("evaluate", node_evaluate)
-    g.add_node("wait_next", node_wait_next)
+    g.add_node("transcribe", transcribe_node)          # Convert audio to text
+    g.add_node("evaluate", node_evaluate)              # Evaluate answer using LLM
+    g.add_node("wait_next", node_wait_next)            # Wait for NEXT action
 
-    # finish flow (3-step)
-    g.add_node("finish_prepare", node_prepare_finish)
-    g.add_node("finish_wait", node_wait_finish)
-    g.add_node("finish_finalize", node_finalize)
+    # Finish flow (3-step process)
+    g.add_node("finish_prepare", node_prepare_finish)  # Generate summary JSON
+    g.add_node("finish_wait", node_wait_finish)        # Wait for FINISH action
+    g.add_node("finish_finalize", node_finalize)       # Final cleanup
 
+    # Define edges (flow)
     g.add_edge(START, "wait_start")
     g.add_edge("wait_start", "ask_question")
     g.add_edge("ask_question", "wait_answer")
     g.add_edge("wait_answer", "transcribe")
-    # g.add_edge("transcribe", "evaluate")
+
+    # After transcribe: retry if empty, otherwise evaluate
     g.add_conditional_edges(
         'transcribe',
         route_after_transcribe,
-        {"wait_again": "wait_answer","evaluate":"evaluate"}
+        {"wait_again": "wait_answer", "evaluate": "evaluate"}
     )
-    # evaluate -> always go to wait_next (user clicks Next)
+
+    # After evaluate: may loop back to wait_answer for follow-up questions
     g.add_conditional_edges(
         "evaluate",
         route_after_eval,
-        {"wait_next": "wait_next","wait_again": "wait_answer"},
+        {"wait_next": "wait_next", "wait_again": "wait_answer"},
     )
 
-    # ✅ ONLY ONE conditional branch from wait_next
+    # After wait_next: either ask next question or finish
     g.add_conditional_edges(
         "wait_next",
         route_after_next,
         {"ask": "ask_question", "finish": "finish_prepare"},
     )
 
+    # Finish flow is linear
     g.add_edge("finish_prepare", "finish_wait")
     g.add_edge("finish_wait", "finish_finalize")
     g.add_edge("finish_finalize", END)
 
+    # Compile with checkpointer to persist state between API calls
     checkpointer = InMemorySaver()
     return g.compile(checkpointer=checkpointer)
 
@@ -971,10 +1127,52 @@ def build_interview_graph(*, transcriber: WhisperTranscriber):
 # Runtime helper for your API/UI
 # -----------------------------
 class InterviewEngine:
+    """
+    Main interface for running adaptive interviews using LangGraph.
+
+    The engine manages the interview state machine, which includes:
+    - Question generation based on difficulty level
+    - Answer evaluation with follow-up questions
+    - Automatic level progression
+    - Interview completion and summary generation
+
+    Example:
+        ```python
+        transcriber = WhisperTranscriber(model_name="small")
+        engine = InterviewEngine(transcriber=transcriber)
+
+        # Initialize new interview session
+        state = await engine.init(thread_id="user-123")
+
+        # Resume with user action
+        state = await engine.resume(
+            thread_id="user-123",
+            resume_payload={"action": "START"}
+        )
+        ```
+    """
+
     def __init__(self, *, transcriber: WhisperTranscriber):
+        """
+        Initialize the interview engine.
+
+        Args:
+            transcriber: WhisperTranscriber instance for speech-to-text
+        """
         self._graph = build_interview_graph(transcriber=transcriber)
 
     async def init(self, *, thread_id: str) -> InterviewState:
+        """
+        Initialize a new interview session.
+
+        Creates initial state and runs graph until first interrupt (AWAITING_START).
+
+        Args:
+            thread_id: Unique identifier for this interview session
+
+        Returns:
+            Initial interview state
+        """
         state = initial_state()
         out = await self._graph.ainvoke(
             state,
@@ -983,6 +1181,17 @@ class InterviewEngine:
         return out
 
     async def resume(self, *, thread_id: str, resume_payload: dict) -> InterviewState:
+        """
+        Resume interview execution with user action.
+
+        Args:
+            thread_id: Interview session identifier
+            resume_payload: Action payload, e.g., {"action": "START"} or
+                          {"action": "ANSWER", "audio_bytes": b"...", ...}
+
+        Returns:
+            Updated interview state after processing the action
+        """
         out = await self._graph.ainvoke(
             Command(resume=resume_payload),
             config={"configurable": {"thread_id": thread_id}},

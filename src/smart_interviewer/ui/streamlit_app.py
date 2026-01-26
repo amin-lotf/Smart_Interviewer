@@ -215,7 +215,8 @@ if not getattr(s, "summary", None):
     st.divider()
 
     # Voice input (only meaningful in AWAITING_ANSWER)
-    audio = st.audio_input("Record your answer", sample_rate=16000)
+    from smart_interviewer.settings import settings
+    audio = st.audio_input("Record your answer", sample_rate=settings.AUDIO_SAMPLE_RATE)
 
     send_disabled = s.interview_done or (audio is None) or (ClientAction.ANSWER not in s.allowed_actions)
     send_clicked = st.button("📨 Send Answer", use_container_width=True, disabled=send_disabled)

@@ -36,6 +36,13 @@ class SessionView:
 
 class ApiClient:
     def __init__(self, base_url: str, timeout_s: float = 120.0) -> None:
+        """
+        Initialize API client.
+
+        Args:
+            base_url: Base URL of the Smart Interviewer API
+            timeout_s: Request timeout in seconds
+        """
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
 
