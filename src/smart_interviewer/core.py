@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import random
 import re
@@ -22,7 +23,7 @@ from smart_interviewer.settings import settings
 from smart_interviewer.transcriber import WhisperTranscriber
 from smart_interviewer.utils import load_question_bank_from_md, InterviewItem
 
-
+logger = logging.getLogger("smart_interviewer")
 # -----------------------------
 # Enums
 # -----------------------------
@@ -31,6 +32,7 @@ class AgentPhase(StrEnum):
     AWAITING_START = "AWAITING_START"
     AWAITING_ANSWER = "AWAITING_ANSWER"
     AWAITING_NEXT = "AWAITING_NEXT"
+    ANSWERED = "ANSWERED"
     EVALUATED = "EVALUATED"
     AWAITING_FINISH = "AWAITING_FINISH"
     DONE = "DONE"
@@ -142,12 +144,11 @@ LLM = ChatOpenAI(
 ASK_SYS = (
     "You are an interview question generator.\n"
     "You will be given:\n"
-    "- Level (difficulty)\n"
     "- Reference context\n"
     "- Objective (what we want to verify)\n"
     "- Previously asked questions (optional)\n\n"
     "Your job:\n"
-    "- Ask ONE clear interview question that tests the objective using the context.\n"
+    "- Ask ONE clear interview question that particularly tests the objective using the context.\n"
     "- Do NOT include the answer.\n"
     "- Do NOT quote the context verbatim unless absolutely necessary.\n"
     "- Keep it concise (one sentence preferred).\n"
@@ -166,7 +167,8 @@ EVAL_SYS = (
     "Decide if the candidate answer is correct.\n"
     "IMPORTANT:\n"
     "- Do NOT require exact wording.\n"
-    "- If the answer is 'almost correct' and matches the meaning implied by the context/objective, mark it correct.\n"
+    "- you can check the correctness only by looking at the context\n"
+    "- If the answer is 'almost correct' for the question only according to the context.  mark it correct.\n"
     "- If it's partially correct but misses the key point, mark it incorrect.\n"
     "Return JSON ONLY with exactly these keys:\n"
     '{"correct": true/false, "reason": "..."}\n'
@@ -506,12 +508,13 @@ async def node_transcribe(state: InterviewState, *, transcriber: WhisperTranscri
             "can_proceed": False,
             "phase": AgentPhase.AWAITING_ANSWER,
         }
-
     new_messages = [HumanMessage(content=f"A{int(state.get('turn') or 0)}: {a}")]
     return {
         **state,
         "text": a,
+        "assistant_text": "Answer recorded.",
         "messages": new_messages,
+        "phase": AgentPhase.ANSWERED
     }
 
 
@@ -519,7 +522,6 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
     q = (state.get("current_question") or "").strip()
     a = (state.get("text") or "").strip()
     level = int(state.get("current_level") or 1)
-
     if not q:
         return {
             **state,
@@ -728,6 +730,11 @@ def route_after_next(state: InterviewState) -> Literal["ask", "finish"]:
         return "finish"
     return "ask"
 
+def route_after_transcribe(state: InterviewState) -> Literal["evaluate","wait_again"]:
+    if state.get('phase')==AgentPhase.AWAITING_ANSWER:
+        return 'wait_again'
+    return 'evaluate'
+
 # -----------------------------
 # Build graph (LangGraph 1.0)
 # -----------------------------
@@ -754,8 +761,12 @@ def build_interview_graph(*, transcriber: WhisperTranscriber):
     g.add_edge("wait_start", "ask_question")
     g.add_edge("ask_question", "wait_answer")
     g.add_edge("wait_answer", "transcribe")
-    g.add_edge("transcribe", "evaluate")
-
+    # g.add_edge("transcribe", "evaluate")
+    g.add_conditional_edges(
+        'transcribe',
+        route_after_transcribe,
+        {"wait_again": "wait_answer","evaluate":"evaluate"}
+    )
     # evaluate -> always go to wait_next (user clicks Next)
     g.add_conditional_edges(
         "evaluate",
