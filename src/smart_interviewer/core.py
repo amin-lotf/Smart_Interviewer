@@ -45,6 +45,12 @@ class ClientAction(StrEnum):
     RETRY = "RETRY"
     FINISH = "FINISH"
 
+class TurnAttempt(TypedDict):
+    question: str
+    answer: str
+    verdict: Literal["correct", "incorrect", "needs_more"]
+    reason: str
+    is_followup: bool
 
 class TurnLog(TypedDict):
     level: int
@@ -52,10 +58,12 @@ class TurnLog(TypedDict):
     item_id: str
     context: str
     objective: str
-    question: str
-    answer: str
+
+    root_question: str
+    attempts: List[TurnAttempt]
+
     correct: bool
-    evaluation: str
+    final_reason: str
 
 
 
@@ -126,7 +134,10 @@ class InterviewState(TypedDict, total=False):
     summary_filename: str
     summary_content_type: str
     summary_data_base64: str
-
+    followups_used: int
+    max_followups: int
+    root_question: str  # first question for this item (kept)
+    turn_attempts: List[TurnAttempt]  # attempts for current item (includes followups)
 
 
 
@@ -160,18 +171,23 @@ ASK_SYS = (
 EVAL_SYS = (
     "You are a strict-but-fair interview grader.\n"
     "You will be given:\n"
-    "- Question\n"
+    "- Current question\n"
     "- Reference context\n"
-    "- Objective (what the question is trying to verify)\n"
+    "- Objective\n"
     "- Candidate answer\n\n"
-    "Decide if the candidate answer is correct.\n"
-    "IMPORTANT:\n"
-    "- Do NOT require exact wording.\n"
-    "- you can check the correctness only by looking at the context\n"
-    "- If the answer is 'almost correct' for the question only according to the context.  mark it correct.\n"
-    "- If it's partially correct but misses the key point, mark it incorrect.\n"
+    "Return ONE of these verdicts:\n"
+    "- correct: answer sufficiently addresses the question.\n"
+    "- incorrect: answer is wrong.\n"
+    "- needs_more: answer is partially correct / incomplete / vague.\n\n"
+    "If verdict is needs_more, generate a FOLLOW-UP QUESTION that asks ONLY for the missing part.\n"
+    "Rules for follow-up question:\n"
+    "- It must be narrower than the original question.\n"
+    "- It must NOT repeat the whole original question.\n"
+    "- It must NOT introduce a new topic.\n"
+    "- One sentence, ends with '?'.\n\n"
     "Return JSON ONLY with exactly these keys:\n"
-    '{"correct": true/false, "reason": "..."}\n'
+    '{"verdict": "correct|incorrect|needs_more", "reason": "...", "next_question": "..."}\n'
+    "If verdict != needs_more, set next_question to empty string.\n"
     "No extra keys. No markdown."
 )
 
@@ -215,6 +231,10 @@ def initial_state() -> InterviewState:
         "summary_filename": "",
         "summary_content_type": "",
         "summary_data_base64": "",
+        "root_question": "",
+        "turn_attempts": [],
+        "followups_used": 0,
+        "max_followups": 2,
     }
 
 
@@ -448,6 +468,9 @@ async def node_ask_question(state: InterviewState) -> InterviewState:
         **state,
         "phase": AgentPhase.AWAITING_ANSWER,
         "current_question": q,
+        "root_question": q,  # <-- keep original
+        "turn_attempts": [],  # <-- new bundle starts here
+        "followups_used": 0,  # <-- reset followups per item
         "assistant_text": f"(Level {level}, Q{batch_index+1}/{len(batch_item_ids)}) {q}",
         "turn": turn,
         "can_proceed": False,
@@ -457,8 +480,8 @@ async def node_ask_question(state: InterviewState) -> InterviewState:
         "current_item_id": item_id,
         "current_context": item.context,
         "current_objective": item.objective,
-
         "messages": new_messages,
+
     }
 
 
@@ -522,6 +545,7 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
     q = (state.get("current_question") or "").strip()
     a = (state.get("text") or "").strip()
     level = int(state.get("current_level") or 1)
+    turns_attempts = list(state.get("turn_attempts") or [])
     if not q:
         return {
             **state,
@@ -552,18 +576,67 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
     resp = await LLM.ainvoke(prompt)
     raw = (resp.content or "").strip()
 
-    correct = False
+    verdict = "incorrect"
+    reason = "Could not parse grading."
+    next_q = ""
     reason = "Could not parse grading."
 
     try:
         data = json.loads(raw)
-        correct = bool(data.get("correct"))
-        reason = (str(data.get("reason") or "").strip() or ("Correct." if correct else "Incorrect."))
+        verdict = str(data.get("verdict") or "").strip().lower()
+        reason = (str(data.get("reason") or "").strip() or "No reason.")
+        next_q = (str(data.get("next_question") or "")).strip()
+        if verdict not in {"correct", "incorrect", "needs_more"}:
+            verdict = "incorrect"
     except Exception:
-        # basic fallback for first classic question
         if q.lower().startswith("what does llm stand for") and "large language model" in a.lower():
-            correct = True
+            verdict = "correct"
             reason = "Correct."
+
+        # --- append attempt (IMPORTANT: do this before branching) ---
+    turns_attempts.append(
+        {
+            "question": q,
+            "answer": a,
+            "verdict": verdict,  # type: ignore
+            "reason": reason,
+            "is_followup": bool(q != (state.get("root_question") or "")),
+        }
+    )
+
+    # --- handle needs_more (no data loss now) ---
+    if verdict == "needs_more":
+        used = int(state.get("followups_used") or 0)
+        max_fu = int(state.get("max_followups") or 2)
+
+        if used < max_fu:
+            if not next_q:
+                next_q = "Can you add the missing detail?"
+
+            return {
+                **state,
+                "phase": AgentPhase.AWAITING_ANSWER,
+                "followups_used": used + 1,
+
+                "current_question": next_q,  # new followup question
+                "assistant_text": next_q,
+                "allowed_actions": [ClientAction.ANSWER],
+                "can_proceed": False,
+
+                "turn_attempts": turns_attempts,  # <-- persist attempts
+                "messages": [AIMessage(content=f"[follow-up] {next_q}")],
+            }
+
+        # followup budget exhausted -> treat as incorrect and continue
+        verdict = "incorrect"
+        # also update the last attempt's verdict to incorrect (optional but clean)
+        turns_attempts[-1]["verdict"] = "incorrect"  # type: ignore
+        turns_attempts[-1]["reason"] = "Follow-up limit reached. " + (turns_attempts[-1]["reason"] or "")
+
+    # now verdict is correct/incorrect -> proceed with your normal scoring
+    correct = (verdict == "correct")
+    reason = (str(data.get("reason") or "").strip() or ("Correct." if correct else "Incorrect."))
+
 
     # Update batch counters
     batch_correct = int(state.get("batch_correct") or 0) + (1 if correct else 0)
@@ -612,15 +685,17 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
     new_messages = [AIMessage(content=f"Feedback: {feedback}")]
 
     log_entry: TurnLog = {
-        "level": int(state.get("batch_level") or level),  # batch_level is the tested level
+        "level": int(state.get("batch_level") or level),
         "turn": int(state.get("turn") or 0),
         "item_id": str(state.get("current_item_id") or ""),
         "context": ctx,
         "objective": obj,
-        "question": q,
-        "answer": a,
+
+        "root_question": str(state.get("root_question") or q),
+        "attempts": turns_attempts,
+
         "correct": bool(correct),
-        "evaluation": reason,  # short evaluation
+        "final_reason": reason,
     }
 
     turns_log = list(state.get("turns_log") or [])
@@ -644,10 +719,14 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
         "interview_done": interview_done,
         "final_level": final_level,
         "turns_log": turns_log,
+        "turn_attempts": [],  # <-- clear bundle for next item
+        "root_question": "",  # <-- clear
     }
 
 
-def route_after_eval(state: InterviewState) -> Literal["wait_next"]:
+def route_after_eval(state: InterviewState) -> Literal["wait_next","wait_again"]:
+    if state.get('phase') == AgentPhase.AWAITING_ANSWER:
+        return 'wait_again'
     return "wait_next"
 
 
@@ -771,7 +850,7 @@ def build_interview_graph(*, transcriber: WhisperTranscriber):
     g.add_conditional_edges(
         "evaluate",
         route_after_eval,
-        {"wait_next": "wait_next"},
+        {"wait_next": "wait_next","wait_again": "wait_answer"},
     )
 
     # ✅ ONLY ONE conditional branch from wait_next
@@ -817,7 +896,7 @@ if __name__ == "__main__":
         model_name='small',
         device='cpu',
         compute_type='int8',
-        language=None,
+        language='English',
     )
     engine = InterviewEngine(transcriber=transcriber)
     engine._graph.get_graph().draw_mermaid_png(output_file_path='flow.png')
