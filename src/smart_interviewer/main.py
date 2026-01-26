@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Run the API and Streamlit UI together for local development."""
+
 import os
 import pathlib
 import signal
@@ -45,7 +47,7 @@ def main() -> None:
     port = int(settings.PORT)
     reload_api = bool(settings.RELOAD)
 
-    # Path to your streamlit file (exactly what you run today)
+    # Path to the Streamlit UI entrypoint.
     ui_path = pathlib.Path("src/smart_interviewer/ui/streamlit_app.py").resolve()
 
     api_cmd = [

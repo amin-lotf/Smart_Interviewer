@@ -1,6 +1,8 @@
 # smart_interviewer/core.py
 from __future__ import annotations
 
+"""Interview orchestration and grading graph logic (LangGraph)."""
+
 import base64
 import json
 import logging
@@ -10,7 +12,7 @@ import re
 from datetime import timezone, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TypedDict, List, Literal, Any, Annotated,Tuple
+from typing import TypedDict, List, Literal, Any, Annotated, Tuple
 
 import anyio
 from langchain_openai import ChatOpenAI
@@ -73,7 +75,7 @@ def _bank_path() -> Path:
     candidate = getattr(settings, "QUESTION_BANK_PATH", None)
     if candidate:
         return Path(candidate)
-    return Path("LLM_interview_questions.md")
+    return Path("data/question_bank.md")
 
 
 # Load once at import time (simple and fast). For hot reload, you can move into InterviewEngine init.
@@ -579,7 +581,7 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
     verdict = "incorrect"
     reason = "Could not parse grading."
     next_q = ""
-    reason = "Could not parse grading."
+    data: dict[str, Any] = {}
 
     try:
         data = json.loads(raw)
@@ -635,7 +637,8 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
 
     # now verdict is correct/incorrect -> proceed with your normal scoring
     correct = (verdict == "correct")
-    reason = (str(data.get("reason") or "").strip() or ("Correct." if correct else "Incorrect."))
+    if not reason:
+        reason = "Correct." if correct else "Incorrect."
 
 
     # Update batch counters

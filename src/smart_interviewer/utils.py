@@ -1,3 +1,5 @@
+"""Utility helpers for loading the interview question bank."""
+
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,7 +69,7 @@ def load_question_bank_from_md(path: str | Path) -> QuestionBank:
             return
         ctx = "\n".join([x.rstrip() for x in cur_context]).strip()
         obj = "\n".join([x.rstrip() for x in cur_objective]).strip()
-        # Only keep valid items with a question
+        # Only keep valid items with context.
         if ctx:
             out.setdefault(cur_level, []).append(
                 InterviewItem(

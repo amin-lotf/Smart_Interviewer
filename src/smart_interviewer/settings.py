@@ -1,4 +1,4 @@
-# src/redact_id/settings.py
+"""Runtime configuration loaded from environment variables and .env."""
 import sys
 from typing import Optional
 
@@ -16,18 +16,26 @@ class Settings(BaseSettings):
         case_sensitive=True,
         env_parse_none_str='None'
     )
-    # === Server ===
+    # Server
     HOST: str = Field(default=DEFAULT_HOST)
     PORT: int = Field(default=DEFAULT_PORT, ge=1, le=65535)
     RELOAD: bool = Field(default=DEFAULT_RELOAD)
-    OPENAI_API_KEY:str = Field(default="")
-    WHISPER_MODEL_NAME:str = Field(default="")
-    WHISPER_DEVICE:str = Field(default="")
-    WHISPER_COMPUTE_TYPE:str = Field(default="")
-    WHISPER_LANGUAGE:Optional[str] = Field(default=None)
-    MAX_TURNS:int = Field(default=MAX_TURNS)
-    QUESTIONS_PER_LEVEL:int = Field(default=3)
-    MIN_PASSED_FOR_LEVEL:int = Field(default=2)
+
+    # Providers
+    OPENAI_API_KEY: str = Field(default="")
+    WHISPER_MODEL_NAME: str = Field(default="")
+    WHISPER_DEVICE: str = Field(default="")
+    WHISPER_COMPUTE_TYPE: str = Field(default="")
+    WHISPER_LANGUAGE: Optional[str] = Field(default=None)
+
+    # Interview config
+    MAX_TURNS: int = Field(default=MAX_TURNS)
+    QUESTIONS_PER_LEVEL: int = Field(default=3)
+    MIN_PASSED_FOR_LEVEL: int = Field(default=2)
+    QUESTION_BANK_PATH: Optional[str] = Field(
+        default=None,
+        description="Optional path to the markdown question bank file.",
+    )
 
 
 def load_settings_or_die() -> Settings:
@@ -45,12 +53,5 @@ def load_settings_or_die() -> Settings:
     return s
 
 settings = load_settings_or_die()
-
-
-
-
-
-
-
 
 
