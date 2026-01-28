@@ -195,17 +195,7 @@ smart-interviewer/
 pytest tests/
 ```
 
-### Code Quality
-```bash
-# Format code
-black src/
 
-# Type checking
-mypy src/
-
-# Linting
-ruff check src/
-```
 
 ### Adding New Questions
 
@@ -214,10 +204,10 @@ Edit `data/question_bank.md`:
 # Level 2
 
 ## Item: advanced-topic
-**Context:**
+Context:
 [Background information for the question]
 
-**Objective:**
+Objective:
 [What specific knowledge you're testing]
 ```
 
@@ -226,14 +216,7 @@ The system will automatically:
 - Evaluate answers against the objective
 - Ask follow-up questions if needed
 
-## Contributing
 
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ## License
 

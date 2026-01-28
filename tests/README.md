@@ -1,6 +1,12 @@
 # Smart Interviewer Tests
 
-This directory contains the test suite for the Smart Interviewer project.
+This folder contains the test suite for Smart Interviewer.
+
+These are **black-box integration tests** against the FastAPI app, using **mocked** speech-to-text and LLM components so tests are:
+- fast
+- deterministic
+- cost-free (no OpenAI calls)
+- CI-friendly (no GPU required)
 
 ## Structure
 
@@ -23,11 +29,7 @@ tests/
 ### Install test dependencies
 
 ```bash
-# Using pip
 pip install -e ".[dev]"
-
-# Or install directly
-pip install pytest pytest-asyncio httpx pytest-cov
 ```
 
 ### Run all tests
@@ -67,7 +69,7 @@ pytest -v
 pytest -s
 ```
 
-## Test Coverage
+## What’s covered
 
 The integration tests cover:
 
