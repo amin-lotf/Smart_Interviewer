@@ -273,7 +273,6 @@ pytest tests/integration/test_api.py
 The test suite uses mocked LLM and Whisper components for fast, deterministic, and cost-free testing. See `tests/README.md` for more details.
 
 
-
 ### Adding New Questions
 
 Edit `data/question_bank.md`:
@@ -281,12 +280,13 @@ Edit `data/question_bank.md`:
 # Level 2
 
 ## Item: advanced-topic
-Context:
+Context: 
 [Background information for the question]
 
 Objective:
 [What specific knowledge you're testing]
 ```
+
 
 The system will automatically:
 - Generate contextual questions
