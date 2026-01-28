@@ -2,6 +2,18 @@
 
 An AI-powered adaptive interviewing system that evaluates candidates through voice interactions with streaming LLM responses. The system automatically adjusts difficulty based on performance and provides real-time feedback with follow-up questions.
 
+## Why Smart Interviewer?
+
+This project demonstrates how to build:
+- AI Interview agents with real-time evaluation
+- Deterministic evaluation logic (not chatty demos)
+- Testable, production-oriented LLM workflows
+
+It is designed as a portfolio-grade MVP for:
+- AI interviewing platforms
+- HR automation tools
+- Voice-based assessment systems
+
 ## Features
 
 - **🎤 Voice-Based Interviews**: Record answers using your microphone
@@ -117,6 +129,10 @@ An AI-powered adaptive interviewing system that evaluates candidates through voi
 
 1. **Start the FastAPI backend**:
    ```bash
+   # Using the installed script
+   interview
+
+   # Or using Python module
    python -m smart_interviewer.main
    ```
    Server runs on `http://localhost:8000`
@@ -127,13 +143,20 @@ An AI-powered adaptive interviewing system that evaluates candidates through voi
    ```
    UI opens at `http://localhost:8501`
 
+### Development Mode
+
+For development with auto-reload:
+```bash
+dev-interview
+```
+
 ### Interview Flow
 
 1. **Start**: Click "🚀 Start" to begin the interview
 2. **Question**: Watch as the question streams in word-by-word
 3. **Answer**: Record your voice answer using the microphone
 4. **Evaluation**: AI evaluates and may ask follow-up questions
-5. **Progress**: System automatically advances levels based on performance
+5. **Progress**: Level-based adaptive progression
 6. **Finish**: Download complete interview transcript at the end
 
 ## Configuration
@@ -172,15 +195,35 @@ Streaming endpoints return NDJSON (newline-delimited JSON) format.
 ```
 smart-interviewer/
 ├── src/smart_interviewer/
+│   ├── main.py             # Entry point (production)
+│   ├── dev.py              # Entry point (development)
 │   ├── app.py              # FastAPI application
-│   ├── core.py             # LangGraph interview logic
-│   ├── transcriber.py      # Whisper STT wrapper
 │   ├── settings.py         # Configuration management
-│   ├── schemas.py          # Data models
-│   ├── utils.py            # Question bank loader
+│   ├── consts.py           # Constants
+│   ├── utils.py            # Utilities
+│   ├── core/               # Core interview logic
+│   │   ├── engine.py       # Interview engine
+│   │   ├── graph.py        # LangGraph state machine
+│   │   ├── nodes.py        # Graph nodes
+│   │   ├── grading.py      # Answer evaluation
+│   │   ├── progression.py  # Level progression logic
+│   │   ├── question_bank.py # Question loader
+│   │   ├── prompts.py      # LLM prompts
+│   │   ├── llm.py          # LLM configuration
+│   │   ├── transcriber.py  # Whisper STT wrapper
+│   │   ├── history.py      # Conversation history
+│   │   ├── summary.py      # Interview summary
+│   │   └── types.py        # Type definitions
 │   └── ui/
 │       ├── api_client.py   # API client library
 │       └── streamlit_app.py # Streamlit UI
+├── tests/                  # Test suite
+│   ├── conftest.py         # Pytest fixtures
+│   ├── mocks/              # Mock components
+│   │   ├── llm.py          # Mock LLM
+│   │   └── transcriber.py  # Mock transcriber
+│   └── integration/        # Integration tests
+│       └── test_api.py     # API tests
 ├── data/
 │   └── question_bank.md    # Interview questions
 ├── .env                    # Environment configuration
@@ -191,9 +234,28 @@ smart-interviewer/
 ## Development
 
 ### Running Tests
+
+Install test dependencies:
 ```bash
-pytest tests/
+pip install -e ".[dev]"
 ```
+
+Run all tests:
+```bash
+pytest
+```
+
+Run with coverage:
+```bash
+pytest --cov=smart_interviewer --cov-report=html
+```
+
+Run specific test file:
+```bash
+pytest tests/integration/test_api.py
+```
+
+The test suite uses mocked LLM and Whisper components for fast, deterministic, and cost-free testing. See `tests/README.md` for more details.
 
 
 
