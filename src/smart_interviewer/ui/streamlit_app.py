@@ -153,56 +153,35 @@ if not getattr(s, "summary", None):
         start_disabled = (ClientAction.START not in s.allowed_actions) or s.interview_done
         if st.button("🚀 Start", use_container_width=True, disabled=start_disabled):
             try:
-                # Use streaming version
-                question_text = ""
-                placeholder = st.empty()
-
-                for chunk in api.start_stream(session_id=st.session_state.session_id):
-                    if "token" in chunk:
-                        question_text += chunk["token"]
-                        # Use container to maintain consistent styling
-                        with placeholder.container():
-                            st.markdown("**Question:**")
-                            st.write(question_text + "▌")  # Add cursor for streaming effect
-                    elif "final_state" in chunk:
-                        s2 = chunk["final_state"]
-                        st.session_state.server = s2
-                        if not s2.interview_done and s2.current_question:
-                            st.session_state.messages.append({"role": "assistant", "content": f"**Question:** {s2.current_question}"})
-
-                placeholder.empty()  # Clear the streaming placeholder
+                with st.spinner(text="Thinking..."):
+                    s2 = api.start(session_id=st.session_state.session_id)
+                st.session_state.server = s2
+                if not s2.interview_done and s2.current_question:
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": f"**Question:** {s2.current_question}"}
+                    )
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
 
     with colB:
         next_disabled = (not s.can_proceed) or (ClientAction.NEXT not in s.allowed_actions)
-        if st.button("➡️ Next", use_container_width=True, disabled=next_disabled):
+        if st.button("⏭️ Next", use_container_width=True, disabled=next_disabled):
             try:
-                # Use streaming version
-                question_text = ""
-                placeholder = st.empty()
+                with st.spinner(text="Thinking..."):
+                    s2 = api.next(session_id=st.session_state.session_id)
+                st.session_state.server = s2
 
-                for chunk in api.next_stream(session_id=st.session_state.session_id):
-                    if "token" in chunk:
-                        question_text += chunk["token"]
-                        # Use container to maintain consistent styling
-                        with placeholder.container():
-                            st.markdown("**Next Question:**")
-                            st.write(question_text + "▌")  # Add cursor for streaming effect
-                    elif "final_state" in chunk:
-                        s2 = chunk["final_state"]
-                        st.session_state.server = s2
-                        if not s2.interview_done and s2.current_question:
-                            st.session_state.messages.append({"role": "assistant", "content": f"**Question:** {s2.current_question}"})
-                        else:
-                            # if the interview ended, show final message in chat too
-                            if s2.interview_done:
-                                st.session_state.messages.append(
-                                    {"role": "assistant", "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
-                                )
+                if s2.interview_done:
+                    st.session_state.messages.append(
+                        {"role": "assistant",
+                         "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
+                    )
+                elif s2.current_question:
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": f"**Question:** {s2.current_question}"}
+                    )
 
-                placeholder.empty()  # Clear the streaming placeholder
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
@@ -229,78 +208,35 @@ if not getattr(s, "summary", None):
 
         try:
             audio_bytes = audio.getvalue()
+            with st.spinner(text="Thinking..."):
+                s2 = api.answer(
+                    audio_bytes=audio_bytes,
+                    filename=f"voice_{int(time.time())}.wav",
+                    content_type="audio/wav",
+                    session_id=st.session_state.session_id,
+                )
+            st.session_state.server = s2
 
-            # Create placeholders for streaming
-            transcript_placeholder = st.empty()
-            eval_placeholder = st.empty()
-            followup_placeholder = st.empty()
+            # show transcript + feedback in chat
+            if s2.transcript.strip():
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"**Transcript:** {s2.transcript.strip()}"}
+                )
 
-            transcript_text = ""
-            eval_text = ""
-            followup_text = ""
+            st.session_state.messages.append(
+                {"role": "assistant", "content": f"**Feedback:**\n\n{s2.assistant_text}"}
+            )
 
-            # Stream the answer flow
-            for chunk in api.answer_stream(
-                audio_bytes=audio_bytes,
-                filename=f"voice_{int(time.time())}.wav",
-                content_type="audio/wav",
-                session_id=st.session_state.session_id,
-            ):
-                if chunk.get("type") == "transcript":
-                    transcript_text = chunk.get("text", "")
-                    transcript_placeholder.info(f"**Transcript:** {transcript_text}")
+            # If follow-up is needed, your engine will be back in AWAITING_ANSWER
+            if (ClientAction.ANSWER in s2.allowed_actions) and s2.current_question:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"**Follow-up:** {s2.current_question}"}
+                )
 
-                elif chunk.get("type") == "eval_token":
-                    eval_text += chunk.get("token", "")
-                    # Don't show raw JSON, just a loading message
-                    eval_placeholder.markdown("🤔 Evaluating your answer...")
-
-                elif chunk.get("type") == "evaluation":
-                    verdict = chunk.get("verdict", "")
-                    reason = chunk.get("reason", "")
-
-                    # Show formatted feedback
-                    if verdict == "correct":
-                        eval_placeholder.success(f"✅ **Correct!** {reason}")
-                    elif verdict == "incorrect":
-                        eval_placeholder.error(f"❌ **Incorrect.** {reason}")
-                    else:
-                        eval_placeholder.warning(f"⚠️ **Needs more detail.** {reason}")
-
-                elif chunk.get("type") == "followup_question":
-                    followup_text = chunk.get("question", "")
-                    followup_placeholder.markdown(f"**Follow-up:** {followup_text}")
-
-                elif "final_state" in chunk:
-                    s2 = chunk["final_state"]
-                    st.session_state.server = s2
-
-                    # Clear placeholders
-                    transcript_placeholder.empty()
-                    eval_placeholder.empty()
-                    followup_placeholder.empty()
-
-                    # Add to chat history
-                    if transcript_text:
-                        st.session_state.messages.append(
-                            {"role": "assistant", "content": f"**Transcript:** {transcript_text}"}
-                        )
-
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": f"**Feedback:**\n\n{s2.assistant_text}"}
-                    )
-
-                    # Show follow-up in chat if present
-                    if followup_text:
-                        st.session_state.messages.append(
-                            {"role": "assistant", "content": f"**Follow-up Question:** {followup_text}"}
-                        )
-
-                    # If interview ended after evaluation, show final in chat
-                    if s2.interview_done:
-                        st.session_state.messages.append(
-                            {"role": "assistant", "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
-                        )
+            if s2.interview_done:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
+                )
 
             st.rerun()
 
@@ -308,3 +244,6 @@ if not getattr(s, "summary", None):
             st.session_state.messages.append({"role": "assistant", "content": f"❌ Answer failed: `{e}`"})
             st.rerun()
 
+        except Exception as e:
+            st.session_state.messages.append({"role": "assistant", "content": f"❌ Answer failed: `{e}`"})
+            st.rerun()

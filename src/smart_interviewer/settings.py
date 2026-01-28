@@ -18,7 +18,7 @@ class Settings(BaseSettings):
         case_sensitive=True,
         env_parse_none_str='None'
     )
-
+    RANDOM_SEED: Optional[int] = Field(default=None, description="Random seed for reproducibility")
     # Server Configuration
     HOST: str = Field(default=DEFAULT_HOST, description="Server host address")
     PORT: int = Field(default=DEFAULT_PORT, ge=1, le=65535, description="Server port")

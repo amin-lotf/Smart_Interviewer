@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, Iterator
 import requests
 import json
+import time
 
 
 @dataclass(frozen=True)
@@ -29,8 +30,6 @@ class SessionView:
     allowed_actions: List[str]
 
     # ✅ new
-    interrupt: Optional[Dict[str, Any]] = None
-    download: Optional[Dict[str, str]] = None
     summary: Optional[Dict[str, str]] = None
 
 
@@ -60,14 +59,33 @@ class ApiClient:
         r.raise_for_status()
         return r.json()
 
-    def get_state(self, *, session_id: str) -> SessionView:
-        r = requests.get(
-            f"{self.base_url}/v1/session/state",
-            timeout=self.timeout_s,
-            headers={"X-Session-Id": session_id},
-        )
-        r.raise_for_status()
-        return self._parse(r.json())
+    def get_state(self, *, session_id: str, retry_count: int = 5, retry_delay: float = 1.0) -> SessionView:
+        """
+        Get session state with retry logic to handle server startup race condition.
+
+        Args:
+            session_id: Session identifier
+            retry_count: Number of retries before giving up
+            retry_delay: Initial delay between retries (exponential backoff)
+        """
+        last_exception = None
+        for attempt in range(retry_count):
+            try:
+                r = requests.get(
+                    f"{self.base_url}/v1/session/state",
+                    timeout=self.timeout_s,
+                    headers={"X-Session-Id": session_id},
+                )
+                r.raise_for_status()
+                return self._parse(r.json())
+            except requests.exceptions.ConnectionError as e:
+                last_exception = e
+                if attempt < retry_count - 1:  # Don't sleep on last attempt
+                    time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+                continue
+
+        # If we exhausted all retries, raise the last exception
+        raise last_exception  # type: ignore
 
     def start(self, *, session_id: str) -> SessionView:
         r = requests.post(
@@ -80,8 +98,9 @@ class ApiClient:
 
     def start_stream(self, *, session_id: str) -> Iterator[Dict[str, Any]]:
         """
-        Streams question generation as it's generated.
-        Yields dicts with either {"token": "..."} or {"final_state": SessionView}
+        NDJSON stream:
+          {"type":"question_token","token":"..."}
+          {"type":"final_state","data":{...}}
         """
         r = requests.post(
             f"{self.base_url}/v1/interview/start/stream",
@@ -92,12 +111,14 @@ class ApiClient:
         r.raise_for_status()
 
         for line in r.iter_lines():
-            if line:
-                data = json.loads(line)
-                if "token" in data:
-                    yield {"token": data["token"]}
-                elif "final_state" in data:
-                    yield {"final_state": self._parse(data["final_state"])}
+            if not line:
+                continue
+            data = json.loads(line)
+            t = data.get("type")
+            if t == "question_token":
+                yield {"type": "question_token", "token": data.get("token", "")}
+            elif t == "final_state":
+                yield {"type": "final_state", "final_state": self._parse(data.get("data", {}))}
 
     def next(self, *, session_id: str) -> SessionView:
         r = requests.post(
@@ -110,8 +131,9 @@ class ApiClient:
 
     def next_stream(self, *, session_id: str) -> Iterator[Dict[str, Any]]:
         """
-        Streams next question generation as it's generated.
-        Yields dicts with either {"token": "..."} or {"final_state": SessionView}
+        NDJSON stream:
+          {"type":"question_token","token":"..."}
+          {"type":"final_state","data":{...}}
         """
         r = requests.post(
             f"{self.base_url}/v1/interview/next/stream",
@@ -122,12 +144,14 @@ class ApiClient:
         r.raise_for_status()
 
         for line in r.iter_lines():
-            if line:
-                data = json.loads(line)
-                if "token" in data:
-                    yield {"token": data["token"]}
-                elif "final_state" in data:
-                    yield {"final_state": self._parse(data["final_state"])}
+            if not line:
+                continue
+            data = json.loads(line)
+            t = data.get("type")
+            if t == "question_token":
+                yield {"type": "question_token", "token": data.get("token", "")}
+            elif t == "final_state":
+                yield {"type": "final_state", "final_state": self._parse(data.get("data", {}))}
 
     def answer(
         self,
@@ -156,13 +180,10 @@ class ApiClient:
         session_id: str,
     ) -> Iterator[Dict[str, Any]]:
         """
-        Streams full answer flow: transcript -> evaluation -> follow-up (if needed).
-        Yields dicts with:
-        - {"type": "transcript", "text": "..."}
-        - {"type": "eval_token", "token": "..."}
-        - {"type": "evaluation", "verdict": "...", "reason": "..."}
-        - {"type": "followup_question", "question": "..."}
-        - {"final_state": SessionView}
+        NDJSON stream:
+          {"type":"transcript_token","token":"..."}
+          {"type":"feedback_token","token":"..."}
+          {"type":"final_state","data":{...}}
         """
         files = {"audio": (filename, audio_bytes, content_type)}
         r = requests.post(
@@ -175,12 +196,15 @@ class ApiClient:
         r.raise_for_status()
 
         for line in r.iter_lines():
-            if line:
-                data = json.loads(line)
-                if "final_state" in data:
-                    yield {"final_state": self._parse(data["final_state"])}
-                else:
-                    yield data
+            if not line:
+                continue
+            data = json.loads(line)
+            t = data.get("type")
+            if t in {"transcript_token", "feedback_token"}:
+                yield {"type": t, "token": data.get("token", "")}
+            elif t == "final_state":
+                yield {"type": "final_state", "final_state": self._parse(data.get("data", {}))}
+
 
     def evaluate_stream(self, *, session_id: str) -> Iterator[Dict[str, Any]]:
         """
@@ -237,7 +261,5 @@ class ApiClient:
             allowed_actions=list(j.get("allowed_actions", [])),
 
             # ✅ new
-            interrupt=j.get("interrupt"),
-            download=j.get("download"),
             summary=j.get("summary"),
         )
