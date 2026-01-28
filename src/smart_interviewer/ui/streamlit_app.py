@@ -187,8 +187,8 @@ if not getattr(s, "summary", None):
                 st.error(str(e))
 
     with colC:
-        if st.button("🧹 Clear chat", use_container_width=True):
-            st.session_state.messages = []
+        if st.button("🧹 Trim chat", use_container_width=True):
+            st.session_state.messages = st.session_state.messages[-1:]
             st.rerun()
 
     st.divider()
