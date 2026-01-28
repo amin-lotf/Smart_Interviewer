@@ -310,6 +310,8 @@ def create_app() -> FastAPI:
             ):
                 if event_type == "evaluation_token":
                     yield json.dumps({"type": "evaluation_token", "token": event_data}, ensure_ascii=False) + "\n"
+                elif event_type == "followup_token":
+                    yield json.dumps({"type": "followup_token", "token": event_data}, ensure_ascii=False) + "\n"
                 elif event_type == "values":
                     final_state = event_data
 

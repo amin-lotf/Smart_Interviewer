@@ -181,8 +181,8 @@ class ApiClient:
     ) -> Iterator[Dict[str, Any]]:
         """
         NDJSON stream:
-          {"type":"transcript_token","token":"..."}
-          {"type":"feedback_token","token":"..."}
+          {"type":"evaluation_token","token":"..."}
+          {"type":"followup_token","token":"..."}
           {"type":"final_state","data":{...}}
         """
         files = {"audio": (filename, audio_bytes, content_type)}
@@ -200,7 +200,7 @@ class ApiClient:
                 continue
             data = json.loads(line)
             t = data.get("type")
-            if t in {"transcript_token", "feedback_token"}:
+            if t in {"evaluation_token", "followup_token"}:
                 yield {"type": t, "token": data.get("token", "")}
             elif t == "final_state":
                 yield {"type": "final_state", "final_state": self._parse(data.get("data", {}))}

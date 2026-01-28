@@ -238,6 +238,7 @@ if not getattr(s, "summary", None):
             # Stream the evaluation feedback
             placeholder = st.empty()
             evaluation_text = ""
+            followup_text = ""
 
             for event in api.answer_stream(
                 audio_bytes=audio_bytes,
@@ -249,7 +250,16 @@ if not getattr(s, "summary", None):
 
                 if event_type == "evaluation_token":
                     evaluation_text += event.get("token", "")
-                    placeholder.markdown(f"**Evaluation (streaming):**\n\n{evaluation_text}")
+                    # Display in a nice info box without the raw JSON
+                    with placeholder.container():
+                        st.info("🔄 Evaluating your answer...")
+
+                elif event_type == "followup_token":
+                    followup_text += event.get("token", "")
+                    with placeholder.container():
+                        st.success("✅ Evaluation complete!")
+                        st.markdown("**Follow-up question:**")
+                        st.info(followup_text)
 
                 elif event_type == "final_state":
                     s2 = event.get("final_state")

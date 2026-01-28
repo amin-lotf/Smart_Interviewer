@@ -266,13 +266,14 @@ async def node_transcribe(state: InterviewState, *, transcriber: WhisperTranscri
     }
 
 
-def handle_followup_logic(
+async def handle_followup_logic(
     *,
     verdict: str,
     next_q: str,
-    reason:str,
+    reason: str,
     state: InterviewState,
     turns_attempts: List[TurnAttempt],
+    writer: Any = None,
 ) -> InterviewState | None:
     if verdict != "needs_more":
         return None
@@ -285,6 +286,15 @@ def handle_followup_logic(
         fq = fq.splitlines()[0].strip()
         if fq and not fq.endswith("?"):
             fq = fq.rstrip(".") + "?"
+
+        # Stream the follow-up question if writer is provided
+        if writer:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"✨ STREAMING follow-up question")
+            for char in fq:
+                writer(("followup_token", char))
+            logger.warning(f"✨ Finished streaming follow-up: {len(fq)} chars")
 
         return {
             **state,
@@ -336,7 +346,7 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
             "is_followup": bool(q != (state.get("root_question") or "")),
         }
     )
-    followup_state = handle_followup_logic(verdict=verdict, next_q=next_q, reason=reason,state=state, turns_attempts=turns_attempts)
+    followup_state = await handle_followup_logic(verdict=verdict, next_q=next_q, reason=reason, state=state, turns_attempts=turns_attempts, writer=writer)
     if followup_state is not None:
         return followup_state
 
