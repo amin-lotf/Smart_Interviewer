@@ -46,6 +46,21 @@ It is designed as a portfolio-grade MVP for:
 │(STT)  │ │(LLM)   │
 └───────┘ └────────┘
 ```
+## Interview State Machine
+
+The interview flow is implemented as an explicit LangGraph state machine.
+Each node represents a deterministic step in the interview lifecycle.
+<p align="center">
+<img src="assets/flow.png" width="100" height="300">
+</p>
+
+**Key concepts:**
+- `ask_question`: streams the next question
+- `wait_answer`: waits for user audio input
+- `transcribe`: converts speech → text
+- `evaluate`: grades the answer and decides next action
+- `wait_again`: handles retries or incomplete answers
+- `finish_*`: prepares and finalizes the interview summary
 
 ## Technology Stack
 
