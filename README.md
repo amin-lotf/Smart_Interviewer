@@ -51,7 +51,7 @@ It is designed as a portfolio-grade MVP for:
 The interview flow is implemented as an explicit LangGraph state machine.
 Each node represents a deterministic step in the interview lifecycle.
 <p align="center">
-<img src="assets/flow.png" width="100" height="300">
+<img src="assets/flow.png" width="150" height="450">
 </p>
 
 **Key concepts:**
