@@ -8,6 +8,7 @@ from typing import Any, Literal, List
 import anyio
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langgraph.types import interrupt
+from langgraph.config import get_stream_writer
 
 from smart_interviewer.settings import settings
 from smart_interviewer.core.transcriber import WhisperTranscriber
@@ -17,7 +18,7 @@ from smart_interviewer.core.prompts import ASK_SYS
 from smart_interviewer.core.llm import LLM
 from smart_interviewer.core.question_bank import pick_batch_for_level, get_item, has_level
 from smart_interviewer.core.history import previous_questions_from_turns_log
-from smart_interviewer.core.grading import evaluate_answer_json, parse_evaluation
+from smart_interviewer.core.grading import evaluate_answer_streaming, parse_evaluation
 from smart_interviewer.core.progression import calculate_level_progression
 from smart_interviewer.core.summary import make_summary_base64
 
@@ -52,6 +53,7 @@ async def generate_question_for_item(
     context: str,
     objective: str,
     prev_questions: List[str],
+    writer: StreamWriter | None = None,
 ) -> str:
     prev_block = ""
     if prev_questions:
@@ -72,10 +74,26 @@ async def generate_question_for_item(
         ),
     ]
 
-    resp = await LLM.ainvoke(prompt)
-    q = (resp.content or "").strip()
+    # Stream the response if writer is provided
+    import logging
+    logger = logging.getLogger(__name__)
+
+    q = ""
+    if writer:
+        logger.warning(f"✨ STREAMING question for turn {turn}, level {level}")
+        async for chunk in LLM.astream(prompt):
+            token = chunk.content or ""
+            if token:
+                q += token
+                writer(("question_token", token))
+        logger.warning(f"✨ Finished streaming {len(q)} chars")
+    else:
+        logger.warning(f"⚡ NON-STREAMING for turn {turn}, level {level} (likely session init)")
+        resp = await LLM.ainvoke(prompt)
+        q = (resp.content or "").strip()
 
     # hardening
+    q = q.strip()
     q = q.splitlines()[0].strip()
     q = re.sub(r"^[-*\d.\s]+", "", q).strip()
     q = q.strip('"""').strip()
@@ -165,6 +183,9 @@ async def node_ask_question(state: InterviewState) -> InterviewState:
     turn = int(state.get("turn") or 0) + 1
     prev_questions = previous_questions_from_turns_log(list(state.get("turns_log") or []), limit=8)
 
+    # Get stream writer from context
+    writer = get_stream_writer()
+
     q = await generate_question_for_item(
         level=level,
         turn=turn,
@@ -172,6 +193,7 @@ async def node_ask_question(state: InterviewState) -> InterviewState:
         context=(item.context or "").strip(),
         objective=(item.objective or "").strip(),
         prev_questions=prev_questions,
+        writer=writer,
     )
 
     new_messages = [AIMessage(content=f"[L{level}][{item_id}] Q{turn}: {q}")]
@@ -299,7 +321,10 @@ async def node_evaluate(state: InterviewState) -> InterviewState:
     ctx = (state.get("current_context") or "").strip()
     obj = (state.get("current_objective") or "").strip()
 
-    raw = await evaluate_answer_json(level=level, question=q, answer=a, context=ctx, objective=obj)
+    # Get stream writer from context
+    writer = get_stream_writer()
+
+    raw = await evaluate_answer_streaming(level=level, question=q, answer=a, context=ctx, objective=obj, writer=writer)
     verdict, reason, next_q = parse_evaluation(raw, question=q, answer=a)
 
     turns_attempts.append(

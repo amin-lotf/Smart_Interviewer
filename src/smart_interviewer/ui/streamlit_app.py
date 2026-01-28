@@ -153,13 +153,27 @@ if not getattr(s, "summary", None):
         start_disabled = (ClientAction.START not in s.allowed_actions) or s.interview_done
         if st.button("🚀 Start", use_container_width=True, disabled=start_disabled):
             try:
-                with st.spinner(text="Thinking..."):
-                    s2 = api.start(session_id=st.session_state.session_id)
-                st.session_state.server = s2
-                if not s2.interview_done and s2.current_question:
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": f"**Question:** {s2.current_question}"}
-                    )
+                # Stream the question generation
+                placeholder = st.empty()
+                question_text = ""
+
+                for event in api.start_stream(session_id=st.session_state.session_id):
+                    event_type = event.get("type")
+
+                    if event_type == "question_token":
+                        question_text += event.get("token", "")
+                        placeholder.markdown(f"**Question (streaming):** {question_text}")
+
+                    elif event_type == "final_state":
+                        s2 = event.get("final_state")
+                        st.session_state.server = s2
+                        placeholder.empty()  # Clear streaming placeholder
+
+                        if not s2.interview_done and s2.current_question:
+                            st.session_state.messages.append(
+                                {"role": "assistant", "content": f"**Question:** {s2.current_question}"}
+                            )
+
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
@@ -168,19 +182,31 @@ if not getattr(s, "summary", None):
         next_disabled = (not s.can_proceed) or (ClientAction.NEXT not in s.allowed_actions)
         if st.button("⏭️ Next", use_container_width=True, disabled=next_disabled):
             try:
-                with st.spinner(text="Thinking..."):
-                    s2 = api.next(session_id=st.session_state.session_id)
-                st.session_state.server = s2
+                # Stream the next question
+                placeholder = st.empty()
+                question_text = ""
 
-                if s2.interview_done:
-                    st.session_state.messages.append(
-                        {"role": "assistant",
-                         "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
-                    )
-                elif s2.current_question:
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": f"**Question:** {s2.current_question}"}
-                    )
+                for event in api.next_stream(session_id=st.session_state.session_id):
+                    event_type = event.get("type")
+
+                    if event_type == "question_token":
+                        question_text += event.get("token", "")
+                        placeholder.markdown(f"**Question (streaming):** {question_text}")
+
+                    elif event_type == "final_state":
+                        s2 = event.get("final_state")
+                        st.session_state.server = s2
+                        placeholder.empty()  # Clear streaming placeholder
+
+                        if s2.interview_done:
+                            st.session_state.messages.append(
+                                {"role": "assistant",
+                                 "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
+                            )
+                        elif s2.current_question:
+                            st.session_state.messages.append(
+                                {"role": "assistant", "content": f"**Question:** {s2.current_question}"}
+                            )
 
                 st.rerun()
             except Exception as e:
@@ -208,40 +234,49 @@ if not getattr(s, "summary", None):
 
         try:
             audio_bytes = audio.getvalue()
-            with st.spinner(text="Thinking..."):
-                s2 = api.answer(
-                    audio_bytes=audio_bytes,
-                    filename=f"voice_{int(time.time())}.wav",
-                    content_type="audio/wav",
-                    session_id=st.session_state.session_id,
-                )
-            st.session_state.server = s2
 
-            # show transcript + feedback in chat
-            if s2.transcript.strip():
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"**Transcript:** {s2.transcript.strip()}"}
-                )
+            # Stream the evaluation feedback
+            placeholder = st.empty()
+            evaluation_text = ""
 
-            st.session_state.messages.append(
-                {"role": "assistant", "content": f"**Feedback:**\n\n{s2.assistant_text}"}
-            )
+            for event in api.answer_stream(
+                audio_bytes=audio_bytes,
+                filename=f"voice_{int(time.time())}.wav",
+                content_type="audio/wav",
+                session_id=st.session_state.session_id,
+            ):
+                event_type = event.get("type")
 
-            # If follow-up is needed, your engine will be back in AWAITING_ANSWER
-            if (ClientAction.ANSWER in s2.allowed_actions) and s2.current_question:
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"**Follow-up:** {s2.current_question}"}
-                )
+                if event_type == "evaluation_token":
+                    evaluation_text += event.get("token", "")
+                    placeholder.markdown(f"**Evaluation (streaming):**\n\n{evaluation_text}")
 
-            if s2.interview_done:
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
-                )
+                elif event_type == "final_state":
+                    s2 = event.get("final_state")
+                    st.session_state.server = s2
+                    placeholder.empty()  # Clear streaming placeholder
 
-            st.rerun()
+                    # show transcript + feedback in chat
+                    if s2.transcript.strip():
+                        st.session_state.messages.append(
+                            {"role": "assistant", "content": f"**Transcript:** {s2.transcript.strip()}"}
+                        )
 
-        except Exception as e:
-            st.session_state.messages.append({"role": "assistant", "content": f"❌ Answer failed: `{e}`"})
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": f"**Feedback:**\n\n{s2.assistant_text}"}
+                    )
+
+                    # If follow-up is needed, your engine will be back in AWAITING_ANSWER
+                    if (ClientAction.ANSWER in s2.allowed_actions) and s2.current_question:
+                        st.session_state.messages.append(
+                            {"role": "assistant", "content": f"**Follow-up:** {s2.current_question}"}
+                        )
+
+                    if s2.interview_done:
+                        st.session_state.messages.append(
+                            {"role": "assistant", "content": f"✅ Interview finished. Final level: **{int(s2.final_level)}**"}
+                        )
+
             st.rerun()
 
         except Exception as e:

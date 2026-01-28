@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import StreamWriter
 
 from smart_interviewer.core.transcriber import WhisperTranscriber
 from smart_interviewer.core.types import InterviewState
@@ -25,13 +27,16 @@ def build_interview_graph(*, transcriber: WhisperTranscriber):
     g = StateGraph(InterviewState)
 
     g.add_node("wait_start", node_wait_start)
+    # LangGraph automatically passes writer to nodes that have it in their signature
     g.add_node("ask_question", node_ask_question)
     g.add_node("wait_answer", node_wait_answer)
 
+    # Transcribe node needs transcriber parameter
     async def transcribe_node(state: InterviewState) -> InterviewState:
         return await node_transcribe(state, transcriber=transcriber)
 
     g.add_node("transcribe", transcribe_node)
+    # LangGraph automatically passes writer to nodes that have it in their signature
     g.add_node("evaluate", node_evaluate)
     g.add_node("wait_next", node_wait_next)
 

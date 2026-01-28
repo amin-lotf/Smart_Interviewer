@@ -211,6 +211,114 @@ def create_app() -> FastAPI:
         PUBLIC_STATE_BY_SESSION[sid] = pub
         return pub
 
+    # -------------------------
+    # Streaming endpoints
+    # -------------------------
+    @app.post("/v1/interview/start/stream")
+    async def interview_start_stream(
+        x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
+    ):
+        """
+        Start interview with streaming question generation.
+        Returns NDJSON stream.
+        """
+        sid = _sid(x_session_id)
+        await _ensure_session_initialized(app, sid)
+
+        async def generate():
+            engine: InterviewEngine = app.state.engine
+            final_state = None
+
+            async for event_type, data in engine.resume_stream(
+                thread_id=sid, resume_payload={"action": ClientAction.START}
+            ):
+                if event_type == "question_token":
+                    yield json.dumps({"type": "question_token", "token": data}, ensure_ascii=False) + "\n"
+                elif event_type == "values":
+                    final_state = data
+
+            if final_state:
+                pub = _public_state(dict(final_state))
+                PUBLIC_STATE_BY_SESSION[sid] = pub
+                yield json.dumps({"type": "final_state", "data": pub}, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+    @app.post("/v1/interview/next/stream")
+    async def interview_next_stream(
+        x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
+    ):
+        """
+        Move to next question with streaming.
+        Returns NDJSON stream.
+        """
+        sid = _sid(x_session_id)
+        await _ensure_session_initialized(app, sid)
+
+        async def generate():
+            engine: InterviewEngine = app.state.engine
+            final_state = None
+
+            async for event_type, data in engine.resume_stream(
+                thread_id=sid, resume_payload={"action": ClientAction.NEXT}
+            ):
+                if event_type == "question_token":
+                    yield json.dumps({"type": "question_token", "token": data}, ensure_ascii=False) + "\n"
+                elif event_type == "values":
+                    final_state = data
+
+            if final_state:
+                pub = _public_state(dict(final_state))
+                PUBLIC_STATE_BY_SESSION[sid] = pub
+                yield json.dumps({"type": "final_state", "data": pub}, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+    @app.post("/v1/interview/answer/stream")
+    async def interview_answer_stream(
+        audio: Annotated[UploadFile, File(description="Audio file")],
+        x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
+    ):
+        """
+        Submit answer with streaming evaluation feedback.
+        Returns NDJSON stream.
+        """
+        sid = _sid(x_session_id)
+        await _ensure_session_initialized(app, sid)
+
+        if not audio.filename:
+            raise HTTPException(status_code=400, detail="Missing audio file")
+        if audio.content_type and not audio.content_type.startswith("audio/"):
+            raise HTTPException(status_code=415, detail=f"Unsupported content-type: {audio.content_type}")
+
+        data = await audio.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty audio bytes")
+
+        async def generate():
+            engine: InterviewEngine = app.state.engine
+            final_state = None
+
+            async for event_type, event_data in engine.resume_stream(
+                thread_id=sid,
+                resume_payload={
+                    "action": ClientAction.ANSWER,
+                    "audio_bytes": data,
+                    "filename": audio.filename or "",
+                    "content_type": audio.content_type or "",
+                },
+            ):
+                if event_type == "evaluation_token":
+                    yield json.dumps({"type": "evaluation_token", "token": event_data}, ensure_ascii=False) + "\n"
+                elif event_type == "values":
+                    final_state = event_data
+
+            if final_state:
+                pub = _public_state(dict(final_state))
+                PUBLIC_STATE_BY_SESSION[sid] = pub
+                yield json.dumps({"type": "final_state", "data": pub}, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(generate(), media_type="application/x-ndjson")
 
     # -------------------------
     # Errors

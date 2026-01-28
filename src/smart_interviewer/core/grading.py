@@ -5,6 +5,7 @@ import re
 from typing import Tuple
 
 from langchain_core.messages import SystemMessage, HumanMessage
+from langgraph.types import StreamWriter
 
 from smart_interviewer.core.llm import LLM
 from smart_interviewer.core.prompts import EVAL_SYS
@@ -72,3 +73,44 @@ async def evaluate_answer_json(
     ]
     resp = await LLM.ainvoke(prompt)
     return (resp.content or "").strip()
+
+
+async def evaluate_answer_streaming(
+    *,
+    level: int,
+    question: str,
+    answer: str,
+    context: str,
+    objective: str,
+    writer: StreamWriter | None = None,
+) -> str:
+    """
+    Evaluate answer with optional streaming support.
+    If writer is provided, streams evaluation tokens.
+    """
+    prompt = [
+        SystemMessage(content=EVAL_SYS),
+        HumanMessage(
+            content=(
+                f"Level: {level}\n"
+                f"Question: {question}\n\n"
+                f"Reference context:\n{context}\n\n"
+                f"Objective:\n{objective}\n\n"
+                f"Candidate answer:\n{answer}\n\n"
+                "Return JSON."
+            )
+        ),
+    ]
+
+    raw = ""
+    if writer:
+        async for chunk in LLM.astream(prompt):
+            token = chunk.content or ""
+            if token:
+                raw += token
+                writer(("evaluation_token", token))
+    else:
+        resp = await LLM.ainvoke(prompt)
+        raw = (resp.content or "").strip()
+
+    return raw.strip()
