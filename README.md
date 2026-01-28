@@ -83,7 +83,7 @@ Each node represents a deterministic step in the interview lifecycle.
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/smart-interviewer.git
+   git clone https://github.com/amin-lotf/Smart_Interviewer
    cd smart-interviewer
    ```
 
