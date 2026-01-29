@@ -94,6 +94,11 @@ Each node represents a deterministic step in the interview lifecycle.
 
    # Install dependencies
    uv sync
+
+   # Activate the virtual environment
+   source .venv/bin/activate  # Linux/macOS
+   # or
+   .venv\Scripts\activate  # Windows
    ```
 
    Or using pip:
@@ -137,6 +142,38 @@ Each node represents a deterministic step in the interview lifecycle.
    **Objective:**
    Verify the candidate understands what LLM stands for.
    ```
+
+## Run with Docker (Docker Hub)
+
+The easiest way to run the application is using the pre-built Docker image:
+
+**Image**: `aminook/smart-interviewer:latest`
+
+1. **Download the environment template**:
+   ```bash
+   curl -O https://raw.githubusercontent.com/amin-lotf/Smart_Interviewer/master/.env.docker.example
+   mv .env.docker.example .env.docker
+   ```
+
+2. **Edit `.env.docker`** and add your OpenAI API key and configure settings:
+   ```bash
+   OPENAI_API_KEY=your-openai-api-key-here
+   # ... other settings
+   ```
+
+3. **Run the container**:
+   ```bash
+   docker run --rm --env-file /path/to/.env.docker -p 8501:8501 aminook/smart-interviewer:latest
+   ```
+
+4. **Access the application**:
+   - UI: `http://localhost:8501`
+   - API: `http://localhost:8000`
+
+**Notes**:
+- Replace `/path/to/.env.docker` with the actual path to your `.env.docker` file
+- The `--rm` flag automatically removes the container when it stops
+- Use `-d` flag to run in detached mode: `docker run -d --env-file ...`
 
 ## Usage
 
@@ -192,18 +229,23 @@ All configuration is managed through environment variables in `.env`:
 
 ## API Endpoints
 
-### Standard Endpoints
+### Session Management
 - `GET /` - Health check
 - `POST /v1/session/reset` - Reset interview session
 - `GET /v1/session/state` - Get current state
+
+### Standard Endpoints
 - `POST /v1/interview/start` - Start interview
 - `POST /v1/interview/answer` - Submit audio answer
 - `POST /v1/interview/next` - Move to next question
 - `POST /v1/interview/finish` - End interview
 
+### Streaming Endpoints
+- `POST /v1/interview/start/stream` - Start interview with streaming question
+- `POST /v1/interview/answer/stream` - Submit answer with streaming evaluation
+- `POST /v1/interview/next/stream` - Move to next question with streaming
 
-
-Streaming endpoints return NDJSON (newline-delimited JSON) format.
+All streaming endpoints return NDJSON (newline-delimited JSON) format with token-by-token responses.
 
 ## Project Structure
 

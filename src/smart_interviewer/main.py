@@ -68,7 +68,7 @@ def main() -> None:
         sys.executable, "-m", "streamlit", "run",
         str(ui_path),
         "--server.port", "8501",
-        "--server.address", "localhost",
+        "--server.address", "0.0.0.0",
         # Big CPU saver:
         "--server.fileWatcherType", "none",
         "--server.runOnSave", "false",
