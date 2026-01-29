@@ -2,12 +2,22 @@
 from __future__ import annotations
 
 import base64
+import re
 import time
 import uuid
 import streamlit as st
 
 from smart_interviewer.core import ClientAction
 from smart_interviewer.ui.api_client import ApiClient, SessionView
+
+
+def compact_stream_line(s: str) -> str:
+    # Handle both real newlines and escaped newlines coming from JSON/SSE
+    s = s.replace("\r", " ").replace("\n", " ")
+    s = s.replace("\\r", " ").replace("\\n", " ")
+    s = s.replace("<br>", " ").replace("<br/>", " ").replace("<br />", " ")
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
 
 st.set_page_config(page_title="Smart Interviewer", page_icon="🎤", layout="centered")
 
@@ -155,14 +165,17 @@ if not getattr(s, "summary", None):
             try:
                 # Stream the question generation
                 placeholder = st.empty()
-                question_text = ""
+                question_text = "111"
 
                 for event in api.start_stream(session_id=st.session_state.session_id):
                     event_type = event.get("type")
-
                     if event_type == "question_token":
                         question_text += event.get("token", "")
-                        placeholder.markdown(f"**Question (streaming):** {question_text}")
+
+                        # FORCE replace (prevents “accumulating” renders)
+
+                        placeholder.empty()
+                        placeholder.text(f"Question (streaming): {question_text.strip()}")
 
                     elif event_type == "final_state":
                         s2 = event.get("final_state")
@@ -191,7 +204,7 @@ if not getattr(s, "summary", None):
 
                     if event_type == "question_token":
                         question_text += event.get("token", "")
-                        placeholder.markdown(f"**Question (streaming):** {question_text}")
+                        placeholder.markdown(f"**Question (streaming):** {compact_stream_line(question_text)}")
 
                     elif event_type == "final_state":
                         s2 = event.get("final_state")
