@@ -124,34 +124,36 @@ if getattr(s, "summary", None):
         st.session_state.server = s2
         st.rerun()
 
-# Top status panel
-c1, c2, c3, c4 = st.columns(4)
-
-# batch_index in state is "how many have been answered in this batch so far"
-# but the current question being shown is (batch_index+1)th in that batch during AWAITING_ANSWER.
-progress_q = min(s.batch_index + 1, max(1, s.batch_size)) if not s.interview_done else s.batch_size
-
-with c1:
-    st.metric("Testing Level", int(s.current_level))
-with c2:
-    st.metric("Progress", f"Q {progress_q}/{int(s.batch_size)}")
-with c3:
-    st.metric("Correct (this level)", int(s.batch_correct))
-with c4:
-    st.metric("Last Passed", int(s.last_passed_level))
-
-st.caption(f"Phase: `{s.phase}` | Allowed: `{', '.join(s.allowed_actions) or '—'}`")
-
 if s.interview_done:
     st.success(f"✅ Interview finished. Final level: **{int(s.final_level)}**")
 
-
-
-
-st.divider()
-
-# Chat window
 if not getattr(s, "summary", None):
+    # Top status panel
+    c1, c2, c3, c4 = st.columns(4)
+
+    # batch_index in state is "how many have been answered in this batch so far"
+    # but the current question being shown is (batch_index+1)th in that batch during AWAITING_ANSWER.
+    progress_q = min(s.batch_index + 1, max(1, s.batch_size)) if not s.interview_done else s.batch_size
+
+    with c1:
+        st.metric("Testing Level", int(s.current_level))
+    with c2:
+        st.metric("Progress", f"Q {progress_q}/{int(s.batch_size)}")
+    with c3:
+        st.metric("Correct (this level)", int(s.batch_correct))
+    with c4:
+        st.metric("Last Passed", int(s.last_passed_level))
+
+    st.caption(f"Phase: `{s.phase}` | Allowed: `{', '.join(s.allowed_actions) or '—'}`")
+
+
+
+
+
+    st.divider()
+
+    # Chat window
+
     for m in st.session_state.messages:
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
@@ -165,7 +167,7 @@ if not getattr(s, "summary", None):
             try:
                 # Stream the question generation
                 placeholder = st.empty()
-                question_text = "111"
+                question_text = ""
 
                 for event in api.start_stream(session_id=st.session_state.session_id):
                     event_type = event.get("type")

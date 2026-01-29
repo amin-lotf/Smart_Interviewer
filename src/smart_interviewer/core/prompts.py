@@ -37,7 +37,7 @@ EVAL_SYS = (
     "  - \"The explanation addressed the question correctly.\"\n"
     "  - \"Only part of the question was answered.\"\n\n"
 
-    "If verdict is `needs_more`, generate a FOLLOW-UP QUESTION that asks ONLY for the missing part.\n"
+    "If verdict is `needs_more`, generate a FOLLOW-UP QUESTION that asks ONLY for the missing part in the original question.\n"
     "Rules for follow-up question:\n"
     "- It must be narrower than the original question.\n"
     "- It must NOT repeat the whole original question.\n"
