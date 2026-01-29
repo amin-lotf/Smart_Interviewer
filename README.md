@@ -1,3 +1,4 @@
+![Docker Pulls](https://img.shields.io/docker/pulls/aminook/smart-interviewer)
 # Smart Interviewer
 
 An AI-powered adaptive interviewing system that evaluates candidates through voice interactions with streaming LLM responses. The system automatically adjusts difficulty based on performance and provides real-time feedback with follow-up questions.
@@ -84,7 +85,7 @@ Each node represents a deterministic step in the interview lifecycle.
 1. **Clone the repository**
    ```bash
    git clone https://github.com/amin-lotf/Smart_Interviewer
-   cd smart-interviewer
+   cd Smart-Interviewer
    ```
 
 2. **Install dependencies** (using uv)
