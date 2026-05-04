@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Dict, Any, AsyncIterator
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Header
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, StreamingResponse
 
 from smart_interviewer.core import InterviewEngine, initial_state, ClientAction, WhisperTranscriber
@@ -63,8 +64,19 @@ def _public_state(st: Dict[str, Any]) -> Dict[str, Any]:
         "final_level": int(st.get("final_level") or 0),
 
         "current_question": st.get("current_question") or "",
+        "root_question": st.get("root_question") or "",
         "assistant_text": st.get("assistant_text") or "",
         "transcript": (st.get("text") or "").strip(),
+        "current_item_id": st.get("current_item_id") or "",
+        "current_context": st.get("current_context") or "",
+        "current_objective": st.get("current_objective") or "",
+        "followups_used": int(st.get("followups_used") or 0),
+        "max_followups": int(st.get("max_followups") or 0),
+        "last_correct": bool(st.get("last_correct") or False),
+        "last_reason": st.get("last_reason") or "",
+        "started_at": st.get("started_at") or "",
+        "finished_at": st.get("finished_at") or "",
+        "turns_log": list(st.get("turns_log") or []),
 
         "can_proceed": bool(st.get("can_proceed") or False),
         "allowed_actions": list(st.get("allowed_actions") or []),
@@ -114,6 +126,13 @@ def create_app() -> FastAPI:
         description="Smart Interviewer API",
         version="0.1.0",
         lifespan=lifespan,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.get("/")
