@@ -170,7 +170,7 @@ uv run uvicorn smart_interviewer.app:create_app --factory --host 127.0.0.1 --por
 ### Run the Streamlit UI
 
 ```bash
-uv run streamlit run src/smart_interviewer/ui/streamlit_app.py
+uv run streamlit run src/smart_interviewer/frontend/streamlit_app.py
 ```
 
 Local URLs:

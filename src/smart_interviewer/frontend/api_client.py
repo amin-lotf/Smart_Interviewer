@@ -1,4 +1,4 @@
-# smart_interviewer/ui/api_client.py
+# smart_interviewer/frontend/api_client.py
 from __future__ import annotations
 
 from dataclasses import dataclass

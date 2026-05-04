@@ -1,4 +1,4 @@
-# smart_interviewer/ui/streamlit_app.py
+# smart_interviewer/frontend/streamlit_app.py
 from __future__ import annotations
 
 import base64
@@ -9,7 +9,7 @@ import streamlit as st
 
 from smart_interviewer.core import ClientAction
 from smart_interviewer.settings import settings
-from smart_interviewer.ui.api_client import ApiClient, SessionView
+from smart_interviewer.frontend.api_client import ApiClient, SessionView
 
 
 def compact_stream_line(s: str) -> str:

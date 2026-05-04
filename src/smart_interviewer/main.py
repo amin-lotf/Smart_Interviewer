@@ -48,7 +48,7 @@ def main() -> None:
     reload_api = bool(settings.RELOAD)
 
     # Path to the Streamlit UI entrypoint.
-    ui_path = pathlib.Path("src/smart_interviewer/ui/streamlit_app.py").resolve()
+    ui_path = pathlib.Path("src/smart_interviewer/frontend/streamlit_app.py").resolve()
 
     api_cmd = [
         sys.executable, "-m", "uvicorn",
@@ -62,7 +62,7 @@ def main() -> None:
         api_cmd.append("--reload")
         # Optional: restrict reload to avoid scanning too much (CPU saver)
         # api_cmd += ["--reload-dir", str(pathlib.Path("src/smart_interviewer").resolve())]
-        # api_cmd += ["--reload-exclude", "src/smart_interviewer/ui/*"]
+        # api_cmd += ["--reload-exclude", "src/smart_interviewer/frontend/*"]
 
     ui_cmd = [
         sys.executable, "-m", "streamlit", "run",

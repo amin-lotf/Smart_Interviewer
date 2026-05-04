@@ -1,0 +1,11 @@
+{
+  "name": "smartinterviewer",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix src/smart_interviewer/frontend/react run dev --",
+    "build": "npm --prefix src/smart_interviewer/frontend/react run build",
+    "preview": "npm --prefix src/smart_interviewer/frontend/react run preview --",
+    "postinstall": "npm run react:install",
+    "react:install": "npm --prefix src/smart_interviewer/frontend/react install"
+  }
+}

@@ -90,7 +90,7 @@ class InterviewState(TypedDict, total=False):
     interview_done: bool
     final_level: int
 
-    # policy / ui helpers
+    # policy / frontend helpers
     can_proceed: bool
     allowed_actions: List[ClientAction]
 
