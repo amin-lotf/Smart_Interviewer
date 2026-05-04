@@ -52,6 +52,10 @@ class Settings(BaseSettings):
 
     # API Configuration
     API_TIMEOUT: int = Field(default=API_TIMEOUT, description="Default API timeout in seconds")
+    API_BASE_URL: str = Field(
+        default="http://localhost:8000",
+        description="Base URL used by the Streamlit UI to reach the API service",
+    )
 
     # Audio Configuration
     AUDIO_SAMPLE_RATE: int = Field(default=AUDIO_SAMPLE_RATE, description="Audio sample rate for recording")
@@ -72,5 +76,4 @@ def load_settings_or_die() -> Settings:
     return s
 
 settings = load_settings_or_die()
-
 

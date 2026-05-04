@@ -8,6 +8,7 @@ import uuid
 import streamlit as st
 
 from smart_interviewer.core import ClientAction
+from smart_interviewer.settings import settings
 from smart_interviewer.ui.api_client import ApiClient, SessionView
 
 
@@ -28,7 +29,7 @@ st.caption("Flow: Start → Answer (voice) → Evaluate → Next (until fail or 
 # Session state
 # ----------------------------
 if "api_base_url" not in st.session_state:
-    st.session_state.api_base_url = "http://localhost:8000"
+    st.session_state.api_base_url = settings.API_BASE_URL
 
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())

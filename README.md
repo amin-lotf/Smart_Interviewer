@@ -1,363 +1,256 @@
 ![Docker Pulls](https://img.shields.io/docker/pulls/aminook/smart-interviewer)
-# Smart Interviewer
 
-An AI-powered adaptive interviewing system that evaluates candidates through voice interactions with streaming LLM responses. The system automatically adjusts difficulty based on performance and provides real-time feedback with follow-up questions.
+# Smart Interviewer — adaptive AI voice interviews for candidate screening
 
-## Why Smart Interviewer?
+Smart Interviewer is an AI-powered interviewing system that runs structured voice interviews, evaluates spoken answers in real time, and adjusts difficulty level by level based on candidate performance.
 
-This project demonstrates how to build:
-- AI Interview agents with real-time evaluation
-- Deterministic evaluation logic (not chatty demos)
-- Testable, production-oriented LLM workflows
+It is designed as a practical foundation for AI screening workflows, technical assessments, and guided interview experiences.
 
-It is designed as a portfolio-grade MVP for:
-- AI interviewing platforms
-- HR automation tools
-- Voice-based assessment systems
+## Demo 🎥
 
-## Features
+Coming soon: a short demo showing a complete interview flow, live question streaming, spoken candidate answers, adaptive follow-ups, and the final downloadable summary.
 
-- **🎤 Voice-Based Interviews**: Record answers using your microphone
-- **🤖 AI Evaluation**: GPT-4o-mini evaluates answers with detailed feedback
-- **📊 Adaptive Difficulty**: Automatically progresses through levels based on performance
-- **🔄 Real-Time Streaming**: LLM responses stream token-by-token for smooth UX
-- **❓ Follow-Up Questions**: System asks clarifying questions for incomplete answers
-- **📝 Interview Transcripts**: Complete interview logs with all attempts and evaluations
-- **🎯 Customizable Question Banks**: Easy-to-edit markdown format for questions
+## Why This Project 🚀
 
-## Architecture
+Many first-round interviews are repetitive, inconsistent, and difficult to scale.
 
+Smart Interviewer shows how AI can support a more structured screening process by combining:
+
+- voice-based interaction
+- explicit interview progression rules
+- AI grading against reference context
+- streamed responses for a smoother experience
+- a machine-readable summary at the end
+
+## What It Solves 💡
+
+This project helps teams move beyond static questionnaires and unstructured chatbot demos.
+
+It can be used to:
+
+- run a guided interview without a live interviewer
+- standardize how candidates are assessed
+- ask follow-up questions when an answer is incomplete
+- increase or stop difficulty based on actual performance
+- produce a reusable transcript and summary for review
+
+## Who It's For 🧑‍💼
+
+- recruiting and talent teams
+- training and certification programs
+- bootcamps and technical education providers
+- teams building AI assessment or screening products
+
+## What You Can Do ✅
+
+- launch interviews through a FastAPI backend
+- use the included Streamlit interface for a working demo UI
+- record spoken answers from the browser
+- transcribe and evaluate responses automatically
+- stream questions and evaluation feedback
+- export a JSON summary of the session
+- swap the question bank for a different role or knowledge domain
+
+## Key Features ⚙️
+
+- Voice-answer capture with browser audio input
+- `faster-whisper` transcription for speech-to-text
+- OpenAI-based answer evaluation with structured JSON grading
+- Adaptive level progression with configurable pass thresholds
+- Follow-up questions for partial or unclear answers
+- Streaming interview endpoints using NDJSON
+- Downloadable interview summary at the end of the flow
+- Markdown-based question bank for easy customization
+
+## Design Highlights 🧠
+
+- **Structured assessment, not free-form chat**  
+  The interview runs through explicit phases and allowed client actions.
+
+- **Adaptive difficulty**  
+  Candidates progress only when they meet the configured threshold for the current batch of questions.
+
+- **Clarification before failure**  
+  The system can ask follow-up questions instead of forcing an immediate pass/fail on weak answers.
+
+- **Easy to retarget**  
+  The current sample bank focuses on LLM fundamentals, but the workflow can be adapted by replacing the question bank.
+
+- **Lean MVP architecture**  
+  The current implementation runs without an external database, which keeps setup simple for demos, pilots, and custom extensions.
+
+## Architecture at a Glance 🏗️
+
+```mermaid
+flowchart LR
+    Candidate --> UI["Streamlit UI (optional)"]
+    UI --> API["FastAPI API"]
+    API --> Engine["LangGraph Interview Engine"]
+    Engine --> Bank["Question Bank"]
+    Engine --> STT["faster-whisper"]
+    Engine --> LLM["OpenAI Evaluation"]
+    Engine --> Summary["JSON Summary"]
 ```
-┌─────────────────┐
-│  Streamlit UI   │  ← User Interface
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  FastAPI Server │  ← REST API + Streaming
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  LangGraph Core │  ← Interview State Machine
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    │         │
-┌───▼───┐ ┌──▼─────┐
-│Whisper│ │OpenAI  │  ← AI Services
-│(STT)  │ │(LLM)   │
-└───────┘ └────────┘
-```
-## Interview State Machine
 
-The interview flow is implemented as an explicit LangGraph state machine.
-Each node represents a deterministic step in the interview lifecycle.
-<p align="center">
-<img src="assets/flow.png" width="150" height="450">
-</p>
+## Workflow Graph 🔄
 
-**Key concepts:**
-- `ask_question`: streams the next question
-- `wait_answer`: waits for user audio input
-- `transcribe`: converts speech → text
-- `evaluate`: grades the answer and decides next action
-- `wait_again`: handles retries or incomplete answers
-- `finish_*`: prepares and finalizes the interview summary
+The image below is generated from the current interview flow in the codebase.
 
-## Technology Stack
+![Smart Interviewer workflow graph](assets/flow.png)
 
-- **Backend**: FastAPI, LangGraph, LangChain
-- **Frontend**: Streamlit
-- **AI Models**:
-  - OpenAI GPT-4o-mini (question generation & evaluation)
-  - faster-whisper (speech-to-text)
-- **State Management**: LangGraph with in-memory checkpointing
+## Current Sample Content 📚
 
-## Installation
+The repository currently ships with a sample question bank focused on **LLM fundamentals**.
 
-### Prerequisites
+- Levels available: `1` and `2`
+- Total sample items: `10`
+- Default file: `data/question_bank.md`
 
-- Python 3.10+
+This makes the current repo suitable as a demo for technical screening, while still being easy to adapt to other domains.
+
+## Tech Stack 🛠️
+
+- Python 3.11+
+- FastAPI
+- Streamlit
+- LangGraph / LangChain
+- OpenAI API
+- `faster-whisper`
+- Docker / Docker Compose
+
+## Quickstart with Docker Compose 🐳
+
+Prerequisites:
+
+- Docker
+- Docker Compose
 - OpenAI API key
-- Microphone access (for voice input)
 
-### Setup
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/amin-lotf/Smart_Interviewer
-   cd Smart-Interviewer
-   ```
-
-2. **Install dependencies** (using uv)
-   ```bash
-   # Install uv if you don't have it
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-
-   # Install dependencies
-   uv sync
-
-   # Activate the virtual environment
-   source .venv/bin/activate  # Linux/macOS
-   # or
-   .venv\Scripts\activate  # Windows
-   ```
-
-   Or using pip:
-   ```bash
-   pip install -e .
-   ```
-
-3. **Configure environment variables**
-
-   Copy the `.env.example` file (or create `.env`) and add your OpenAI API key:
-   ```bash
-   # API Keys
-   OPENAI_API_KEY=your-openai-api-key-here
-
-   # Whisper Configuration
-   WHISPER_MODEL_NAME=small
-   WHISPER_DEVICE=cpu
-   WHISPER_COMPUTE_TYPE=int8
-   WHISPER_LANGUAGE=en
-
-   # Interview Configuration
-   QUESTIONS_PER_LEVEL=3
-   MIN_PASSED_FOR_LEVEL=2
-   MAX_FOLLOWUP_QUESTIONS=2
-
-   # LLM Configuration
-   LLM_MODEL=gpt-4o-mini
-   LLM_TEMPERATURE=0.3
-   ```
-
-4. **Customize question bank** (optional)
-
-   Edit `data/question_bank.md` to add your own questions:
-   ```markdown
-   # Level 1
-
-   ## Item: llm-basics
-   **Context:**
-   Large Language Models (LLMs) are AI systems trained on vast amounts of text...
-
-   **Objective:**
-   Verify the candidate understands what LLM stands for.
-   ```
-
-## Run with Docker (Docker Hub)
-
-The easiest way to run the application is using the pre-built Docker image:
-
-**Image**: `aminook/smart-interviewer:latest`
-
-1. **Download the environment template**:
-   ```bash
-   curl -O https://raw.githubusercontent.com/amin-lotf/Smart_Interviewer/master/.env.docker.example
-   mv .env.docker.example .env.docker
-   ```
-
-2. **Edit `.env.docker`** and add your OpenAI API key and configure settings:
-   ```bash
-   OPENAI_API_KEY=your-openai-api-key-here
-   # ... other settings
-   ```
-
-3. **Run the container**:
-   ```bash
-   docker run --rm --env-file /path/to/.env.docker -p 8501:8501 aminook/smart-interviewer:latest
-   ```
-
-4. **Access the application**:
-   - UI: `http://localhost:8501`
-   - API: `http://localhost:8000`
-
-**Notes**:
-- Replace `/path/to/.env.docker` with the actual path to your `.env.docker` file
-- The `--rm` flag automatically removes the container when it stops
-- Use `-d` flag to run in detached mode: `docker run -d --env-file ...`
-
-## Usage
-
-### Running the Application
-
-1. **Start the FastAPI backend**:
-   ```bash
-   # Using the installed script
-   interview
-
-   # Or using Python module
-   python -m smart_interviewer.main
-   ```
-   Server runs on `http://localhost:8000`
-
-2. **Start the Streamlit UI** (in another terminal):
-   ```bash
-   streamlit run src/smart_interviewer/ui/streamlit_app.py
-   ```
-   UI opens at `http://localhost:8501`
-
-### Development Mode
-
-For development with auto-reload:
 ```bash
-dev-interview
+# 1. Create the Docker env file
+cp .env.docker.example .env.docker
+
+# 2. Edit .env.docker and set OPENAI_API_KEY
+
+# 3. Start the API
+docker compose up --build
+
+# Optional: start the Streamlit UI too
+docker compose --profile streamlit up --build
 ```
 
-### Interview Flow
+Access services:
 
-1. **Start**: Click "🚀 Start" to begin the interview
-2. **Question**: Watch as the question streams in word-by-word
-3. **Answer**: Record your voice answer using the microphone
-4. **Evaluation**: AI evaluates and may ask follow-up questions
-5. **Progress**: Level-based adaptive progression
-6. **Finish**: Download complete interview transcript at the end
+- API: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
+- Streamlit UI: `http://localhost:8501` when the `streamlit` profile is enabled
 
-## Configuration
+Notes:
 
-All configuration is managed through environment variables in `.env`:
+- The current Compose setup includes the API and an optional Streamlit UI profile.
+- The image tag referenced by Compose is `aminook/smart-interviewer:0.2.0`.
+- Streamlit reads `API_BASE_URL` from the environment. In Compose this should be `http://app:8000`.
+
+## Local Development 💻
+
+Use local Python processes when you want to work on the app directly.
+
+```bash
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY
+uv sync --dev
+```
+
+### Run the API
+
+```bash
+uv run uvicorn smart_interviewer.app:create_app --factory --host 127.0.0.1 --port 8000 --reload
+```
+
+### Run the Streamlit UI
+
+```bash
+uv run streamlit run src/smart_interviewer/ui/streamlit_app.py
+```
+
+Local URLs:
+
+- API: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
+- Streamlit UI: `http://localhost:8501`
+
+### Run Tests
+
+```bash
+uv run pytest
+```
+
+## Configuration ⚙️
+
+Key environment variables:
 
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `OPENAI_API_KEY` | OpenAI API key | Required |
+|---|---|---|
+| `OPENAI_API_KEY` | OpenAI API key used for interview generation and grading | Required |
 | `WHISPER_MODEL_NAME` | Whisper model size | `small` |
-| `WHISPER_DEVICE` | Compute device | `cpu` |
-| `LLM_MODEL` | OpenAI model | `gpt-4o-mini` |
-| `LLM_TEMPERATURE` | Response randomness | `0.3` |
-| `QUESTIONS_PER_LEVEL` | Questions per difficulty level | `3` |
-| `MIN_PASSED_FOR_LEVEL` | Required correct answers | `2` |
-| `MAX_FOLLOWUP_QUESTIONS` | Max follow-ups per answer | `2` |
-| `AUDIO_SAMPLE_RATE` | Recording sample rate (Hz) | `16000` |
+| `WHISPER_DEVICE` | Whisper execution device | `cpu` |
+| `QUESTIONS_PER_LEVEL` | Questions asked per level | `3` |
+| `MIN_PASSED_FOR_LEVEL` | Correct answers required to pass a level | `2` |
+| `MAX_FOLLOWUP_QUESTIONS` | Max follow-ups before the system moves on | `2` |
+| `QUESTION_BANK_PATH` | Optional custom path for the markdown question bank | `data/question_bank.md` |
+| `LLM_MODEL` | OpenAI model used for evaluation | `gpt-4o-mini` |
+| `API_BASE_URL` | Base URL the Streamlit UI uses to call the API | `http://localhost:8000` |
+| `AUDIO_SAMPLE_RATE` | Browser recording sample rate | `16000` |
 
-## API Endpoints
+## API at a Glance 🔌
 
-### Session Management
-- `GET /` - Health check
-- `POST /v1/session/reset` - Reset interview session
-- `GET /v1/session/state` - Get current state
+All interview endpoints use the `X-Session-Id` header to track the active session.
 
-### Standard Endpoints
-- `POST /v1/interview/start` - Start interview
-- `POST /v1/interview/answer` - Submit audio answer
-- `POST /v1/interview/next` - Move to next question
-- `POST /v1/interview/finish` - End interview
+Session endpoints:
 
-### Streaming Endpoints
-- `POST /v1/interview/start/stream` - Start interview with streaming question
-- `POST /v1/interview/answer/stream` - Submit answer with streaming evaluation
-- `POST /v1/interview/next/stream` - Move to next question with streaming
+- `GET /` - health check
+- `POST /v1/session/reset` - reset or create a session
+- `GET /v1/session/state` - fetch current interview state
 
-All streaming endpoints return NDJSON (newline-delimited JSON) format with token-by-token responses.
+Interview endpoints:
 
-## Project Structure
+- `POST /v1/interview/start`
+- `POST /v1/interview/answer`
+- `POST /v1/interview/next`
+- `POST /v1/interview/finish`
 
-```
-smart-interviewer/
-├── src/smart_interviewer/
-│   ├── main.py             # Entry point (production)
-│   ├── dev.py              # Entry point (development)
-│   ├── app.py              # FastAPI application
-│   ├── settings.py         # Configuration management
-│   ├── consts.py           # Constants
-│   ├── utils.py            # Utilities
-│   ├── core/               # Core interview logic
-│   │   ├── engine.py       # Interview engine
-│   │   ├── graph.py        # LangGraph state machine
-│   │   ├── nodes.py        # Graph nodes
-│   │   ├── grading.py      # Answer evaluation
-│   │   ├── progression.py  # Level progression logic
-│   │   ├── question_bank.py # Question loader
-│   │   ├── prompts.py      # LLM prompts
-│   │   ├── llm.py          # LLM configuration
-│   │   ├── transcriber.py  # Whisper STT wrapper
-│   │   ├── history.py      # Conversation history
-│   │   ├── summary.py      # Interview summary
-│   │   └── types.py        # Type definitions
-│   └── ui/
-│       ├── api_client.py   # API client library
-│       └── streamlit_app.py # Streamlit UI
-├── tests/                  # Test suite
-│   ├── conftest.py         # Pytest fixtures
-│   ├── mocks/              # Mock components
-│   │   ├── llm.py          # Mock LLM
-│   │   └── transcriber.py  # Mock transcriber
-│   └── integration/        # Integration tests
-│       └── test_api.py     # API tests
-├── data/
-│   └── question_bank.md    # Interview questions
-├── .env                    # Environment configuration
-├── pyproject.toml          # Project dependencies
-└── README.md
-```
+Streaming endpoints:
 
-## Development
+- `POST /v1/interview/start/stream`
+- `POST /v1/interview/answer/stream`
+- `POST /v1/interview/next/stream`
 
-### Running Tests
+Streaming responses use NDJSON so the UI can render tokens progressively.
 
-Install test dependencies:
-```bash
-pip install -e ".[dev]"
-```
+## Customization 🎯
 
-Run all tests:
-```bash
-pytest
-```
+The easiest way to adapt Smart Interviewer to a new client or use case is to change the question bank.
 
-Run with coverage:
-```bash
-pytest --cov=smart_interviewer --cov-report=html
-```
+The current markdown format supports:
 
-Run specific test file:
-```bash
-pytest tests/integration/test_api.py
-```
+- levels
+- item IDs
+- reference context
+- evaluation objectives
 
-The test suite uses mocked LLM and Whisper components for fast, deterministic, and cost-free testing. See `tests/README.md` for more details.
+You can either:
 
+- edit `data/question_bank.md`, or
+- set `QUESTION_BANK_PATH` to a different markdown file
 
-### Adding New Questions
+## Roadmap 🗺️
 
-Edit `data/question_bank.md`:
-```markdown
-# Level 2
-
-## Item: advanced-topic
-Context: 
-[Background information for the question]
-
-Objective:
-[What specific knowledge you're testing]
-```
-
-
-The system will automatically:
-- Generate contextual questions
-- Evaluate answers against the objective
-- Ask follow-up questions if needed
-
-
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- **OpenAI** for GPT models
-- **faster-whisper** for efficient speech recognition
-- **LangChain/LangGraph** for LLM orchestration
-- **Streamlit** for rapid UI development
-
-## Contact
-
-For questions or feedback, please open an issue on GitHub.
-
----
-
-**Note**: This is an MVP project. For production use, consider adding:
-- User authentication
-- Database persistence
-- Rate limiting
-- Error monitoring
-- Comprehensive test coverage
+- [ ] Demo video
+- [ ] Persistent interview storage
+- [ ] Multi-role question packs
+- [ ] Branded client-facing UI
+- [x] Voice input
+- [x] Streaming API responses
+- [x] Adaptive interview progression
+- [x] Downloadable JSON summary
+- [x] Dockerized setup

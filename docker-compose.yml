@@ -1,0 +1,29 @@
+services:
+  app:
+    build: .
+    image: aminook/smart-interviewer:0.2.0
+    container_name: smart_interviewer_app
+    env_file:
+      - .env.docker
+    ports:
+      - "${API_PORT:-8000}:${API_PORT:-8000}"
+
+  streamlit:
+    build: .
+    image: aminook/smart-interviewer:0.2.0
+    container_name: smart_interviewer_streamlit
+    profiles:
+      - streamlit
+    env_file:
+      - .env.docker
+    environment:
+      API_BASE_URL: http://app:8000
+    command: >
+      sh -c "streamlit run src/smart_interviewer/ui/streamlit_app.py
+      --server.address ${STREAMLIT_HOST:-0.0.0.0}
+      --server.port ${STREAMLIT_PORT:-8501}"
+    ports:
+      - "${STREAMLIT_PORT:-8501}:${STREAMLIT_PORT:-8501}"
+    depends_on:
+      - app
+
