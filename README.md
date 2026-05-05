@@ -45,6 +45,7 @@ It can be used to:
 
 - launch interviews through a FastAPI backend
 - use the included Streamlit interface for a working demo UI
+- use the included React interface for a Vite-based frontend
 - record spoken answers from the browser
 - transcribe and evaluate responses automatically
 - stream questions and evaluation feedback
@@ -113,6 +114,8 @@ This makes the current repo suitable as a demo for technical screening, while st
 - Python 3.11+
 - FastAPI
 - Streamlit
+- React
+- Vite
 - LangGraph / LangChain
 - OpenAI API
 - `faster-whisper`
@@ -137,6 +140,12 @@ docker compose up --build
 
 # Optional: start the Streamlit UI too
 docker compose --profile streamlit up --build
+
+# Optional: start the React UI too
+docker compose --profile react up --build
+
+# Optional: start API + Streamlit + React together
+docker compose --profile streamlit --profile react up --build
 ```
 
 Access services:
@@ -144,21 +153,30 @@ Access services:
 - API: `http://localhost:8000`
 - API docs: `http://localhost:8000/docs`
 - Streamlit UI: `http://localhost:8501` when the `streamlit` profile is enabled
+- React UI: `http://localhost:5173` when the `react` profile is enabled
 
 Notes:
 
-- The current Compose setup includes the API and an optional Streamlit UI profile.
+- The current Compose setup includes the API plus optional `streamlit` and `react` profiles.
 - The image tag referenced by Compose is `aminook/smart-interviewer:0.2.0`.
 - Streamlit reads `API_BASE_URL` from the environment. In Compose this should be `http://app:8000`.
+- The React container runs the Vite dev server and uses `VITE_API_BASE_URL=http://localhost:8000/`.
 
 ## Local Development 💻
 
-Use local Python processes when you want to work on the app directly.
+Use local processes when you want to work on the app directly.
 
 ```bash
 cp .env.example .env
 # Edit .env and set OPENAI_API_KEY
 uv sync --dev
+```
+
+If you want to run the React frontend locally, install Node.js 22+ and then install the frontend dependencies:
+
+```bash
+cd src/smart_interviewer/frontend/react
+npm install
 ```
 
 ### Run the API
@@ -173,11 +191,18 @@ uv run uvicorn smart_interviewer.app:create_app --factory --host 127.0.0.1 --por
 uv run streamlit run src/smart_interviewer/frontend/streamlit_app.py
 ```
 
+### Run the React UI
+
+```bash
+npm run dev -- --host 0.0.0.0 --port 5173
+```
+
 Local URLs:
 
 - API: `http://localhost:8000`
 - API docs: `http://localhost:8000/docs`
 - Streamlit UI: `http://localhost:8501`
+- React UI: `http://localhost:5173`
 
 ### Run Tests
 
@@ -200,6 +225,7 @@ Key environment variables:
 | `QUESTION_BANK_PATH` | Optional custom path for the markdown question bank | `data/question_bank.md` |
 | `LLM_MODEL` | OpenAI model used for evaluation | `gpt-4o-mini` |
 | `API_BASE_URL` | Base URL the Streamlit UI uses to call the API | `http://localhost:8000` |
+| `VITE_API_BASE_URL` | Base URL the React UI uses to call the API | `http://localhost:8000` |
 | `AUDIO_SAMPLE_RATE` | Browser recording sample rate | `16000` |
 
 ## API at a Glance 🔌
