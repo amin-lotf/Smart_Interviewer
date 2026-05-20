@@ -41,6 +41,8 @@ export function AnswerComposer({
   onSubmit,
 }: AnswerComposerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const isRecording = recorderStatus === "recording";
+  const showProcessing = recorderStatus === "processing";
 
   return (
     <div className="space-y-5">
@@ -48,8 +50,8 @@ export function AnswerComposer({
         <button
           type="button"
           onClick={() => void onStartRecording()}
-          disabled={busy || !recordingSupported || recorderStatus === "recording"}
-          className="inline-flex items-center gap-2 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+          disabled={busy || !recordingSupported || isRecording}
+          className="inline-flex min-h-12 items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-5 py-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
         >
           <Mic className="h-4 w-4" />
           Record
@@ -57,10 +59,10 @@ export function AnswerComposer({
         <button
           type="button"
           onClick={() => void onStopRecording()}
-          disabled={busy || recorderStatus !== "recording"}
-          className="inline-flex items-center gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm font-medium text-amber-100 transition hover:bg-amber-400/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+          disabled={busy || !isRecording}
+          className="inline-flex min-h-12 items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
         >
-          {recorderStatus === "processing" ? (
+          {showProcessing ? (
             <LoaderCircle className="h-4 w-4 animate-spin" />
           ) : (
             <Square className="h-4 w-4" />
@@ -71,7 +73,7 @@ export function AnswerComposer({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={busy}
-          className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:text-slate-500"
+          className="inline-flex min-h-12 items-center gap-2 rounded-full border border-sky-200 bg-white px-5 py-3 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
         >
           <Upload className="h-4 w-4" />
           Upload Audio
@@ -80,7 +82,7 @@ export function AnswerComposer({
           type="button"
           onClick={onClearSelection}
           disabled={busy || !selectedAudio}
-          className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:text-slate-500"
+          className="inline-flex min-h-12 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
         >
           <Trash2 className="h-4 w-4" />
           Clear
@@ -94,27 +96,27 @@ export function AnswerComposer({
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-sm text-slate-400">
-        <span className="rounded-full border border-white/10 px-3 py-1">
+      <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+        <span className="rounded-full border border-amber-100 bg-amber-50 px-3 py-1.5">
           Recorder: {recordingSupported ? recorderStatus : "upload only"}
         </span>
-        <span className="rounded-full border border-white/10 px-3 py-1">
-          Backend expects audio uploads for answer submission
+        <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5">
+          Submit a recorded or uploaded response
         </span>
       </div>
 
       {recorderError ? (
-        <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+        <div className="rounded-3xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {recorderError}
         </div>
       ) : null}
 
       {selectedAudio ? (
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+        <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-medium text-slate-100">{selectedAudio.fileName}</p>
-              <p className="mt-1 text-sm text-slate-400">
+              <p className="text-sm font-semibold text-slate-900">{selectedAudio.fileName}</p>
+              <p className="mt-1 text-sm text-slate-600">
                 {selectedAudio.source} • {selectedAudio.mimeType || "audio/*"} •{" "}
                 {formatBytes(selectedAudio.size)}
               </p>
@@ -123,22 +125,20 @@ export function AnswerComposer({
           <audio className="mt-4 w-full" controls src={selectedAudio.previewUrl} />
         </div>
       ) : (
-        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-8 text-center text-sm text-slate-400">
-          Capture an answer from the microphone or upload an existing recording before sending it to
-          the API.
+        <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm leading-6 text-slate-600">
+          Capture an answer from the microphone or upload an existing recording before submitting it.
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-4">
-        <p className="max-w-xl text-sm text-slate-400">
-          The React client mirrors the current backend contract. It does not synthesize text-answer
-          requests because the API only accepts audio on the answer endpoint today.
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <p className="max-w-xl text-sm leading-6 text-slate-600">
+          Keep the candidate response short and clear. The current API flow still submits audio only.
         </p>
         <button
           type="button"
           onClick={() => void onSubmit()}
           disabled={!canSubmit}
-          className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-400/12 px-5 py-2.5 text-sm font-medium text-emerald-100 transition hover:bg-emerald-400/18 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.05] disabled:text-slate-500"
+          className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500"
         >
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
           Submit Answer

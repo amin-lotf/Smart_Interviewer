@@ -21,45 +21,45 @@ function roleStyle(role: TranscriptRole) {
     case "user":
       return {
         icon: FileAudio,
-        accent: "from-cyan-400/25 to-cyan-500/10 text-cyan-200 ring-cyan-400/20",
-        badge: "bg-cyan-400/12 text-cyan-200",
+        accent: "from-rose-50 to-white text-slate-900 ring-rose-100",
+        badge: "bg-rose-100 text-rose-700",
       };
     case "transcript":
       return {
         icon: NotebookText,
-        accent: "from-slate-400/20 to-slate-500/10 text-slate-200 ring-white/10",
-        badge: "bg-slate-400/10 text-slate-200",
+        accent: "from-slate-50 to-white text-slate-900 ring-slate-200",
+        badge: "bg-slate-200 text-slate-700",
       };
     case "evaluation":
       return {
         icon: BrainCircuit,
-        accent: "from-emerald-400/25 to-emerald-500/10 text-emerald-100 ring-emerald-400/20",
-        badge: "bg-emerald-400/12 text-emerald-200",
+        accent: "from-emerald-50 to-white text-slate-900 ring-emerald-100",
+        badge: "bg-emerald-100 text-emerald-700",
       };
     case "followup":
       return {
         icon: MessageCircleReply,
-        accent: "from-amber-400/25 to-amber-500/10 text-amber-100 ring-amber-400/20",
-        badge: "bg-amber-400/12 text-amber-200",
+        accent: "from-amber-50 to-white text-slate-900 ring-amber-100",
+        badge: "bg-amber-100 text-amber-700",
       };
     case "system":
       return {
         icon: Sparkles,
-        accent: "from-violet-400/25 to-violet-500/10 text-violet-100 ring-violet-400/20",
-        badge: "bg-violet-400/12 text-violet-200",
+        accent: "from-violet-50 to-white text-slate-900 ring-violet-100",
+        badge: "bg-violet-100 text-violet-700",
       };
     case "error":
       return {
         icon: AlertCircle,
-        accent: "from-rose-400/25 to-rose-500/10 text-rose-100 ring-rose-400/20",
-        badge: "bg-rose-400/12 text-rose-200",
+        accent: "from-rose-50 to-white text-slate-900 ring-rose-100",
+        badge: "bg-rose-100 text-rose-700",
       };
     case "assistant":
     default:
       return {
         icon: MessageSquareText,
-        accent: "from-indigo-400/25 to-indigo-500/10 text-indigo-100 ring-indigo-400/20",
-        badge: "bg-indigo-400/12 text-indigo-200",
+        accent: "from-sky-50 to-white text-slate-900 ring-sky-100",
+        badge: "bg-sky-100 text-sky-700",
       };
   }
 }
@@ -79,9 +79,9 @@ export function TranscriptFeed({
 }: TranscriptFeedProps) {
   if (!entries.length) {
     return (
-      <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-6 py-10 text-center">
-        <p className="text-base font-medium text-slate-200">{emptyTitle}</p>
-        <p className="mt-2 max-w-md text-sm text-slate-400">{emptyBody}</p>
+      <div className="flex min-h-64 flex-col items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center">
+        <p className="text-base font-medium text-slate-800">{emptyTitle}</p>
+        <p className="mt-2 max-w-md text-sm leading-6 text-slate-600">{emptyBody}</p>
       </div>
     );
   }
@@ -95,11 +95,11 @@ export function TranscriptFeed({
         return (
           <article
             key={entry.id}
-            className={`rounded-2xl border border-white/10 bg-gradient-to-br ${style.accent} p-4 ring-1`}
+            className={`rounded-3xl border bg-gradient-to-br ${style.accent} p-4 ring-1`}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
-                <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950/40">
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white shadow-sm">
                   <Icon className="h-4 w-4" />
                 </span>
                 <div>
@@ -111,9 +111,9 @@ export function TranscriptFeed({
                   </span>
                 </div>
               </div>
-              <time className="text-xs text-slate-400">{formatTimestamp(entry.timestamp)}</time>
+              <time className="text-xs text-slate-500">{formatTimestamp(entry.timestamp)}</time>
             </div>
-            <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-100">{entry.content}</p>
+            <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{entry.content}</p>
           </article>
         );
       })}
