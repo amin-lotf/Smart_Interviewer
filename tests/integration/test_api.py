@@ -1,6 +1,7 @@
 """Integration tests for FastAPI endpoints."""
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from pathlib import Path
+from unittest.mock import patch, MagicMock
 from httpx import ASGITransport, AsyncClient
 from io import BytesIO
 
@@ -66,7 +67,25 @@ def mock_interview_engine():
 
 
 @pytest.fixture
-async def app(mock_transcriber, mock_interview_engine):
+def mock_tts_service(tmp_path):
+    """Mock TTS service returning a small mp3 payload."""
+
+    class MockTTSService:
+        enabled = True
+        media_type = "audio/mpeg"
+
+        def synthesize_to_path(self, text: str) -> Path | None:
+            if not text.strip():
+                return None
+            target = tmp_path / "question.mp3"
+            target.write_bytes(b"fake-mp3-bytes")
+            return target
+
+    return MockTTSService()
+
+
+@pytest.fixture
+async def app(mock_transcriber, mock_interview_engine, mock_tts_service):
     """Create FastAPI app for testing with mocked dependencies."""
     # Patch InterviewEngine before creating the app
     with patch('smart_interviewer.core.engine.InterviewEngine.__init__', return_value=None):
@@ -75,6 +94,7 @@ async def app(mock_transcriber, mock_interview_engine):
         # Manually set app state since lifespan isn't triggered in tests
         app.state.transcriber = mock_transcriber
         app.state.engine = mock_interview_engine
+        app.state.tts_service = mock_tts_service
 
         yield app
 
@@ -238,6 +258,36 @@ class TestInterviewEndpoints:
         assert data["status"] == "ok"
         assert data["interview_done"] is True
         assert data["final_level"] > 0
+
+    async def test_question_tts_returns_audio(self, client, test_session_id):
+        """Test interviewer question TTS endpoint returns audio bytes."""
+        await client.post(
+            "/v1/session/reset",
+            headers={"X-Session-Id": test_session_id}
+        )
+
+        response = await client.post(
+            "/v1/tts/question",
+            headers={"X-Session-Id": test_session_id},
+            json={"text": "What is binary search?"},
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("audio/mpeg")
+        assert response.content == b"fake-mp3-bytes"
+
+    async def test_question_tts_returns_no_content_for_empty_text(self, client, test_session_id):
+        """Test interviewer question TTS endpoint ignores empty text."""
+        await client.post(
+            "/v1/session/reset",
+            headers={"X-Session-Id": test_session_id}
+        )
+
+        response = await client.post(
+            "/v1/tts/question",
+            headers={"X-Session-Id": test_session_id},
+            json={"text": "   "},
+        )
+        assert response.status_code == 204
 
 
 class TestInterviewFlow:

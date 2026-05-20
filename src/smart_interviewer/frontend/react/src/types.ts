@@ -55,6 +55,7 @@ export interface SessionState {
   can_proceed: boolean;
   allowed_actions: ClientAction[];
   summary?: SummaryAsset | null;
+  tts_enabled?: boolean;
 }
 
 export type TokenStreamEvent =

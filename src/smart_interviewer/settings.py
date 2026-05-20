@@ -9,7 +9,8 @@ from smart_interviewer.consts import (
     DEFAULT_HOST, DEFAULT_PORT, DEFAULT_RELOAD,
     MAX_TURNS,WHISPER_MODEL_NAME,WHISPER_DEVICE,WHISPER_COMPUTE_TYPE,
     WHISPER_LANGUAGE,QUESTIONS_PER_LEVEL,MIN_PASSED_FOR_LEVEL,MAX_FOLLOWUP_QUESTIONS,
-    LLM_MODEL,LLM_TEMPERATURE,API_TIMEOUT,AUDIO_SAMPLE_RATE)
+    LLM_MODEL,LLM_TEMPERATURE,API_TIMEOUT,AUDIO_SAMPLE_RATE,
+    TTS_ENABLED,TTS_MODEL,TTS_VOICE,TTS_RESPONSE_FORMAT)
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables and .env file."""
@@ -60,6 +61,15 @@ class Settings(BaseSettings):
     # Audio Configuration
     AUDIO_SAMPLE_RATE: int = Field(default=AUDIO_SAMPLE_RATE, description="Audio sample rate for recording")
 
+    # Text-to-Speech Configuration
+    TTS_ENABLED: bool = Field(default=TTS_ENABLED, description="Enable interviewer question TTS generation")
+    TTS_MODEL: str = Field(default=TTS_MODEL, description="OpenAI TTS model used for interviewer playback")
+    TTS_VOICE: str = Field(default=TTS_VOICE, description="OpenAI TTS voice used for interviewer playback")
+    TTS_RESPONSE_FORMAT: str = Field(
+        default=TTS_RESPONSE_FORMAT,
+        description="Audio format returned by the TTS service",
+    )
+
 
 def load_settings_or_die() -> Settings:
     try:
@@ -76,4 +86,3 @@ def load_settings_or_die() -> Settings:
     return s
 
 settings = load_settings_or_die()
-

@@ -6,11 +6,14 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Annotated, Dict, Any, AsyncIterator
 
+import anyio
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Header
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from smart_interviewer.core import InterviewEngine, initial_state, ClientAction, WhisperTranscriber
+from smart_interviewer.services import OpenAITTSService
 from smart_interviewer.settings import settings
 
 logger = logging.getLogger("smart_interviewer")
@@ -28,6 +31,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.transcriber = transcriber
     app.state.engine = InterviewEngine(transcriber=transcriber)
+    app.state.tts_service = OpenAITTSService.from_settings(settings)
     yield
 
 
@@ -82,7 +86,12 @@ def _public_state(st: Dict[str, Any]) -> Dict[str, Any]:
         "allowed_actions": list(st.get("allowed_actions") or []),
 
         "summary": summary,
+        "tts_enabled": bool(settings.TTS_ENABLED and settings.OPENAI_API_KEY),
     }
+
+
+class QuestionTTSRequest(BaseModel):
+    text: str = ""
 
 
 async def _ensure_session_initialized(app: FastAPI, sid: str) -> Dict[str, Any]:
@@ -348,6 +357,26 @@ def create_app() -> FastAPI:
                 yield json.dumps({"type": "final_state", "data": pub}, ensure_ascii=False) + "\n"
 
         return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+    @app.post("/v1/tts/question")
+    async def question_tts(
+        payload: QuestionTTSRequest,
+        x_session_id: Annotated[str, Header(alias="X-Session-Id")] = "",
+    ):
+        sid = _sid(x_session_id)
+        await _ensure_session_initialized(app, sid)
+
+        tts_service: OpenAITTSService = app.state.tts_service
+        audio_path = await anyio.to_thread.run_sync(tts_service.synthesize_to_path, payload.text)
+        if audio_path is None:
+            return Response(status_code=204)
+
+        return FileResponse(
+            path=audio_path,
+            media_type=tts_service.media_type,
+            filename=audio_path.name,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     # -------------------------
     # Errors

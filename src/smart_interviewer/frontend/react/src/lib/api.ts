@@ -52,6 +52,31 @@ async function requestJson<T>(
   return (await response.json()) as T;
 }
 
+async function requestBlob(
+  path: string,
+  init: RequestInit = {},
+  sessionId?: string,
+): Promise<Blob | null> {
+  const headers = sessionId
+    ? withSessionHeaders(sessionId, init.headers)
+    : new Headers(init.headers);
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers,
+  });
+
+  if (response.status === 204) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return response.blob();
+}
+
 function buildAudioFormData(audio: Blob, filename: string): FormData {
   const formData = new FormData();
   formData.append("audio", audio, filename);
@@ -124,5 +149,22 @@ export const smartInterviewerApi = {
       },
       onMessage,
     });
+  },
+
+  fetchQuestionSpeech(
+    sessionId: string,
+    text: string,
+    signal?: AbortSignal,
+  ): Promise<Blob | null> {
+    return requestBlob(
+      "/v1/tts/question",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+        signal,
+      },
+      sessionId,
+    );
   },
 };

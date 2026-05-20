@@ -25,6 +25,11 @@ API_TIMEOUT=120
 # Audio Configuration
 AUDIO_SAMPLE_RATE=16000
 
+# Text-to-Speech Configuration
+TTS_ENABLED=False
+TTS_MODEL="gpt-4o-mini-tts"
+TTS_VOICE="coral"
+TTS_RESPONSE_FORMAT="mp3"
 
 
 

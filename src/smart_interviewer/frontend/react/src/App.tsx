@@ -9,6 +9,8 @@ import {
   RotateCcw,
   Server,
   SquareTerminal,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -29,6 +31,7 @@ import type {
 } from "./types";
 
 const SESSION_STORAGE_KEY = "smart-interviewer.react.session-id";
+const QUESTION_VOICE_STORAGE_KEY = "smart-interviewer.react.voice-enabled";
 const INITIAL_STREAMING_STATE: StreamingState = {
   active: false,
   mode: null,
@@ -129,9 +132,17 @@ function App() {
   const [selectedAudio, setSelectedAudio] = useState<AudioSelection | null>(null);
   const [uiError, setUiError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"events" | "debug">("events");
+  const [voiceEnabled, setVoiceEnabled] = useState(() => {
+    const saved = window.localStorage.getItem(QUESTION_VOICE_STORAGE_KEY);
+    return saved ? saved === "true" : true;
+  });
 
   const activeAbortController = useRef<AbortController | null>(null);
   const selectedAudioRef = useRef<AudioSelection | null>(null);
+  const questionAudioRef = useRef<HTMLAudioElement | null>(null);
+  const questionAudioUrlRef = useRef<string | null>(null);
+  const questionAudioAbortRef = useRef<AbortController | null>(null);
+  const lastSpokenQuestionKeyRef = useRef<string>("");
 
   const recorder = useAudioRecorder();
 
@@ -149,13 +160,8 @@ function App() {
   }, [sessionId]);
 
   useEffect(() => {
-    return () => {
-      if (selectedAudioRef.current?.previewUrl) {
-        URL.revokeObjectURL(selectedAudioRef.current.previewUrl);
-      }
-      activeAbortController.current?.abort();
-    };
-  }, []);
+    window.localStorage.setItem(QUESTION_VOICE_STORAGE_KEY, String(voiceEnabled));
+  }, [voiceEnabled]);
 
   const pushTranscriptEntry = useCallback((entry: Omit<TranscriptEntry, "id" | "timestamp">) => {
     setTranscript((current) => [
@@ -188,6 +194,40 @@ function App() {
       activeAbortController.current = null;
     }
   }, []);
+
+  const stopQuestionAudio = useCallback(() => {
+    if (questionAudioAbortRef.current) {
+      questionAudioAbortRef.current.abort();
+      questionAudioAbortRef.current = null;
+    }
+
+    if (questionAudioRef.current) {
+      questionAudioRef.current.pause();
+      questionAudioRef.current.src = "";
+      questionAudioRef.current = null;
+    }
+
+    if (questionAudioUrlRef.current) {
+      URL.revokeObjectURL(questionAudioUrlRef.current);
+      questionAudioUrlRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (selectedAudioRef.current?.previewUrl) {
+        URL.revokeObjectURL(selectedAudioRef.current.previewUrl);
+      }
+      activeAbortController.current?.abort();
+      stopQuestionAudio();
+    };
+  }, [stopQuestionAudio]);
+
+  useEffect(() => {
+    if (!voiceEnabled) {
+      stopQuestionAudio();
+    }
+  }, [stopQuestionAudio, voiceEnabled]);
 
   const refreshHealth = useCallback(async () => {
     setHealth({ status: "loading", message: "Checking API" });
@@ -230,6 +270,86 @@ function App() {
       setPendingAction(null);
     }
   }, [pushEvent, sessionId]);
+
+  const playQuestionAudio = useCallback(
+    async ({
+      enabled,
+      question,
+      questionKey,
+      label,
+    }: {
+      enabled: boolean;
+      question: string;
+      questionKey: string;
+      label: string;
+    }) => {
+      const trimmedQuestion = question.trim();
+      if (!voiceEnabled || !enabled || !trimmedQuestion || !questionKey) {
+        return;
+      }
+
+      if (lastSpokenQuestionKeyRef.current === questionKey) {
+        return;
+      }
+
+      stopQuestionAudio();
+
+      const controller = new AbortController();
+      questionAudioAbortRef.current = controller;
+
+      try {
+        const audioBlob = await smartInterviewerApi.fetchQuestionSpeech(
+          sessionId,
+          trimmedQuestion,
+          controller.signal,
+        );
+        if (controller.signal.aborted || !audioBlob) {
+          return;
+        }
+
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+
+        questionAudioUrlRef.current = audioUrl;
+        questionAudioRef.current = audio;
+
+        audio.onended = () => {
+          if (questionAudioRef.current === audio) {
+            questionAudioRef.current = null;
+          }
+          if (questionAudioUrlRef.current === audioUrl) {
+            URL.revokeObjectURL(audioUrl);
+            questionAudioUrlRef.current = null;
+          }
+        };
+
+        await audio.play();
+        lastSpokenQuestionKeyRef.current = questionKey;
+        pushEvent({
+          type: "system",
+          label: "Question audio",
+          detail: `${label} playback started`,
+        });
+      } catch (caughtError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        const message = toErrorMessage(caughtError);
+        stopQuestionAudio();
+        pushEvent({
+          type: "error",
+          label: "Question audio failed",
+          detail: message,
+        });
+      } finally {
+        if (questionAudioAbortRef.current === controller) {
+          questionAudioAbortRef.current = null;
+        }
+      }
+    },
+    [pushEvent, sessionId, stopQuestionAudio, voiceEnabled],
+  );
 
   useEffect(() => {
     void refreshHealth();
@@ -357,6 +477,7 @@ function App() {
   );
 
   const clearActiveInterviewView = useCallback(() => {
+    stopQuestionAudio();
     setSessionState((current) => {
       if (!current) {
         return current;
@@ -374,10 +495,11 @@ function App() {
       };
     });
     setAudioSelection(null);
-  }, [setAudioSelection]);
+  }, [setAudioSelection, stopQuestionAudio]);
 
   const handleResetSession = useCallback(async () => {
     abortActiveStream();
+    stopQuestionAudio();
     setPendingAction("reset");
     setUiError(null);
 
@@ -396,6 +518,7 @@ function App() {
         },
       ]);
       setAudioSelection(null);
+      lastSpokenQuestionKeyRef.current = "";
     } catch (caughtError) {
       const message = toErrorMessage(caughtError);
       setUiError(message);
@@ -407,10 +530,11 @@ function App() {
     } finally {
       setPendingAction(null);
     }
-  }, [abortActiveStream, pushEvent, sessionId, setAudioSelection]);
+  }, [abortActiveStream, pushEvent, sessionId, setAudioSelection, stopQuestionAudio]);
 
   const handleNewSession = useCallback(() => {
     abortActiveStream();
+    stopQuestionAudio();
     setAudioSelection(null);
     setTranscript([]);
     setEventLog([]);
@@ -418,7 +542,8 @@ function App() {
     setSessionState(null);
     setStreaming(INITIAL_STREAMING_STATE);
     setSessionId(createSessionId());
-  }, [abortActiveStream, setAudioSelection]);
+    lastSpokenQuestionKeyRef.current = "";
+  }, [abortActiveStream, setAudioSelection, stopQuestionAudio]);
 
   const handleStart = useCallback(async () => {
     clearActiveInterviewView();
@@ -433,10 +558,16 @@ function App() {
             title: "Interview Question",
             content: question,
           });
+          void playQuestionAudio({
+            enabled: !!finalState.tts_enabled,
+            question,
+            questionKey: `${finalState.turn}:${finalState.followups_used ?? 0}:${question}`,
+            label: "Interview question",
+          });
         }
       },
     );
-  }, [clearActiveInterviewView, pushTranscriptEntry, runStreamingAction, sessionId]);
+  }, [clearActiveInterviewView, playQuestionAudio, pushTranscriptEntry, runStreamingAction, sessionId]);
 
   const prepareFinishSummary = useCallback(async () => {
     clearActiveInterviewView();
@@ -478,10 +609,16 @@ function App() {
             title: "Next Question",
             content: question,
           });
+          void playQuestionAudio({
+            enabled: !!finalState.tts_enabled,
+            question,
+            questionKey: `${finalState.turn}:${finalState.followups_used ?? 0}:${question}`,
+            label: "Next question",
+          });
         }
       },
     );
-  }, [clearActiveInterviewView, pushTranscriptEntry, runStreamingAction, sessionId]);
+  }, [clearActiveInterviewView, playQuestionAudio, pushTranscriptEntry, runStreamingAction, sessionId]);
 
   const handleStartRecording = useCallback(async () => {
     const started = await recorder.startRecording();
@@ -525,6 +662,8 @@ function App() {
     if (!selectedAudio) {
       return;
     }
+
+    stopQuestionAudio();
 
     pushTranscriptEntry({
       role: "user",
@@ -570,6 +709,12 @@ function App() {
             title: "Follow-up Question",
             content: finalState.current_question,
           });
+          void playQuestionAudio({
+            enabled: !!finalState.tts_enabled,
+            question: finalState.current_question,
+            questionKey: `${finalState.turn}:${finalState.followups_used ?? 0}:${finalState.current_question}`,
+            label: "Follow-up question",
+          });
         }
 
         if (finalState.interview_done) {
@@ -589,11 +734,13 @@ function App() {
     }
   }, [
     prepareFinishSummary,
+    playQuestionAudio,
     pushTranscriptEntry,
     runStreamingAction,
     selectedAudio,
     sessionId,
     setAudioSelection,
+    stopQuestionAudio,
   ]);
 
   const handleFinish = useCallback(async () => {
@@ -687,6 +834,7 @@ function App() {
       : sessionState?.assistant_text || "";
   const showSummaryView = hasSummary;
   const showInterviewFlowPanels = !showSummaryView;
+  const voiceAvailable = !!sessionState?.tts_enabled;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -905,6 +1053,25 @@ function App() {
                 <Panel
                   title="Current Question"
                   subtitle="Question text is updated progressively while the backend stream is open."
+                  actions={
+                    <button
+                      type="button"
+                      onClick={() => setVoiceEnabled((current) => !current)}
+                      disabled={!voiceAvailable}
+                      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+                        voiceAvailable
+                          ? "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.08]"
+                          : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
+                      }`}
+                    >
+                      {voiceEnabled ? (
+                        <Volume2 className="h-4 w-4 text-cyan-300" />
+                      ) : (
+                        <VolumeX className="h-4 w-4 text-slate-400" />
+                      )}
+                      {voiceAvailable ? (voiceEnabled ? "Voice On" : "Voice Off") : "Voice Unavailable"}
+                    </button>
+                  }
                 >
                   <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
                     <div className="flex items-center gap-3 text-sm text-slate-400">
@@ -919,6 +1086,11 @@ function App() {
                       {liveQuestion || "Start the interview to request the first question."}
                     </p>
                   </div>
+                  {!voiceAvailable ? (
+                    <p className="mt-4 text-sm text-slate-500">
+                      Enable backend TTS to play interviewer questions in the browser.
+                    </p>
+                  ) : null}
                   {streaming.followupText ? (
                     <div className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-100">
                       {streaming.followupText}

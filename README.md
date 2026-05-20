@@ -56,6 +56,7 @@ It can be used to:
 
 - Voice-answer capture with browser audio input
 - `faster-whisper` transcription for speech-to-text
+- Optional OpenAI TTS playback for interviewer questions
 - OpenAI-based answer evaluation with structured JSON grading
 - Adaptive level progression with configurable pass thresholds
 - Follow-up questions for partial or unclear answers
@@ -228,6 +229,10 @@ Key environment variables:
 | `VITE_API_BASE_URL` | Optional direct base URL the React UI uses to call the API; when unset in dev it uses the Vite `/api` proxy | unset |
 | `VITE_API_PROXY_TARGET` | Backend target used by the Vite dev server proxy | `http://127.0.0.1:8000` |
 | `AUDIO_SAMPLE_RATE` | Browser recording sample rate | `16000` |
+| `TTS_ENABLED` | Enable interviewer question playback through OpenAI TTS | `0` |
+| `TTS_MODEL` | OpenAI TTS model used for interviewer playback | `gpt-4o-mini-tts` |
+| `TTS_VOICE` | OpenAI voice used for interviewer playback | `coral` |
+| `TTS_RESPONSE_FORMAT` | Audio format returned by the TTS endpoint | `mp3` |
 
 ## API at a Glance 🔌
 
