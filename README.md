@@ -160,7 +160,7 @@ Notes:
 - The current Compose setup includes the API plus optional `streamlit` and `react` profiles.
 - The image tag referenced by Compose is `aminook/smart-interviewer:0.2.0`.
 - Streamlit reads `API_BASE_URL` from the environment. In Compose this should be `http://app:8000`.
-- The React container runs the Vite dev server and uses `VITE_API_BASE_URL=http://localhost:8000/`.
+- The React container runs the Vite dev server and proxies `/api` to `VITE_API_PROXY_TARGET=http://app:8000`.
 
 ## Local Development 💻
 
@@ -225,7 +225,8 @@ Key environment variables:
 | `QUESTION_BANK_PATH` | Optional custom path for the markdown question bank | `data/question_bank.md` |
 | `LLM_MODEL` | OpenAI model used for evaluation | `gpt-4o-mini` |
 | `API_BASE_URL` | Base URL the Streamlit UI uses to call the API | `http://localhost:8000` |
-| `VITE_API_BASE_URL` | Base URL the React UI uses to call the API | `http://localhost:8000` |
+| `VITE_API_BASE_URL` | Optional direct base URL the React UI uses to call the API; when unset in dev it uses the Vite `/api` proxy | unset |
+| `VITE_API_PROXY_TARGET` | Backend target used by the Vite dev server proxy | `http://127.0.0.1:8000` |
 | `AUDIO_SAMPLE_RATE` | Browser recording sample rate | `16000` |
 
 ## API at a Glance 🔌

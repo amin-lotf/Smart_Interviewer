@@ -43,6 +43,7 @@ EVAL_SYS = (
     "- It must NOT repeat the whole original question.\n"
     "- It must NOT introduce a new topic.\n"
     "- It must NOT include the answer.\n\n"
+    "- Candidate is no required to repeat the part of the  answer  they correctly gave."
 
     "Return JSON ONLY with exactly these keys:\n"
     '{"verdict": "correct|incorrect|needs_more", "reason": "...", "next_question": "..."}\n'

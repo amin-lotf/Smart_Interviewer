@@ -1,7 +1,7 @@
 import type { SessionState, TokenStreamEvent } from "../types";
 import { streamNdjson } from "./ndjson";
 
-const DEFAULT_API_BASE_URL = "http://localhost:8000";
+const DEFAULT_API_BASE_URL = import.meta.env.DEV ? "/api" : "http://localhost:8000";
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");

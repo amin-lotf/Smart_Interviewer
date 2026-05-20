@@ -7,7 +7,7 @@ from typing import Any, Literal, List
 
 import anyio
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langgraph.types import interrupt
+from langgraph.types import interrupt, StreamWriter
 from langgraph.config import get_stream_writer
 
 from smart_interviewer.settings import settings
